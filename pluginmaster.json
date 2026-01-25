@@ -1,0 +1,21 @@
+[
+  {
+    "Author": "flick",
+    "Name": "QuickTransfer",
+    "InternalName": "QuickTransfer",
+    "AssemblyVersion": "1.0.0.0",
+    "Description": "Automate inventory transfers with Shift/Ctrl + Right-Click.",
+    "ApplicableVersion": "any",
+    "RepoUrl": "https://github.com/Knack117/QuickTransfer",
+    "DalamudApiLevel": 14,
+    "Punchline": "Quick item transfer helpers.",
+    "Tags": [
+      "inventory",
+      "utility",
+      "quality of life"
+    ],
+    "AcceptsFeedback": true,
+    "DownloadLinkInstall": "https://github.com/Knack117/QuickTransfer/releases/latest/download/QuickTransfer.zip",
+    "DownloadLinkUpdate": "https://github.com/Knack117/QuickTransfer/releases/latest/download/QuickTransfer.zip"
+  }
+]

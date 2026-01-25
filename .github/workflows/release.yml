@@ -1,0 +1,58 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-release:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Fetch Dalamud SDK libs (api14)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $url = "https://raw.githubusercontent.com/goatcorp/dalamud-distrib/main/api14/latest.zip"
+          $tmp = Join-Path $env:RUNNER_TEMP "dalamud"
+          $zip = Join-Path $tmp "dalamud.zip"
+          $dst = Join-Path $tmp "extracted"
+          New-Item -ItemType Directory -Force $dst | Out-Null
+          Invoke-WebRequest -Uri $url -OutFile $zip
+          Expand-Archive -Path $zip -DestinationPath $dst -Force
+
+          $dalamudDll = Get-ChildItem -Path $dst -Recurse -Filter "Dalamud.dll" | Select-Object -First 1
+          if (-not $dalamudDll) { throw "Dalamud.dll not found after extracting $url" }
+
+          $env:DALAMUD_HOME = $dalamudDll.Directory.FullName
+          "DALAMUD_HOME=$($env:DALAMUD_HOME)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Restore
+        run: dotnet restore
+
+      - name: Build (Release)
+        run: dotnet build -c Release --no-restore
+
+      - name: Prepare release zip
+        shell: pwsh
+        run: |
+          $zip = "bin\\Release\\QuickTransfer\\latest.zip"
+          if (!(Test-Path $zip)) { throw "Expected pack zip not found: $zip" }
+          Copy-Item $zip "QuickTransfer.zip" -Force
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            QuickTransfer.zip

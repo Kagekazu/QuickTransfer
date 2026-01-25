@@ -1,0 +1,86 @@
+# User-specific files
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# Build results
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+[Bb]uild/
+build/
+[Bb]in/
+[Oo]bj/
+
+# Visual Studio 2015
+.vs/
+
+# NuGet Packages
+*.nupkg
+packages/
+**/packages/*
+!packages/repositories.config
+
+# MSTest test Results
+[Tt]est[Rr]esult*/
+[Bb]uild[Ll]og.*
+
+# ReSharper
+_ReSharper*/
+*.[Rr]e[Ss]harper
+*.DotSettings.user
+
+# TeamCity
+_TeamCity*
+
+# DotCover
+coverage/
+
+# ncRush
+*.ncrush*
+
+# .NET Core
+project.lock.json
+project.fragment.lock.json
+artifacts/
+
+# StyleCop
+StyleCopReport.xml
+
+# Build files
+*.mak
+
+# RIA/Silverlight projects
+Generated_Code/
+
+# Backup & report files
+*_Report.htm
+*_Report.html
+*.log
+Thumbs.db
+App.config
+
+# IDE
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Game data
+sqpack/
+*.sqpack
+
+# Dalamud specific
+addon/
+hooks/

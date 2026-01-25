@@ -1,0 +1,22 @@
+<Project Sdk="Dalamud.NET.Sdk/14.0.1">
+    <PropertyGroup>
+        <TargetFramework>net10.0-windows</TargetFramework>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+        <AssemblyName>QuickTransfer</AssemblyName>
+        <RootNamespace>QuickTransfer</RootNamespace>
+        <OutputType>Library</OutputType>
+        <IsPackable>false</IsPackable>
+    </PropertyGroup>
+
+    <!-- Local builds: some setups have DALAMUD_HOME pointing at the XIVLauncher root,
+         not the actual dev hooks folder. If the resolved DalamudLibPath doesn't contain
+         Dalamud.dll, fall back to the standard Roaming dev hooks path. -->
+    <PropertyGroup Condition="$([MSBuild]::IsOSPlatform('Windows'))">
+        <_DalamudDevHooksPath>$(APPDATA)\XIVLauncher\addon\Hooks\dev\</_DalamudDevHooksPath>
+    </PropertyGroup>
+    <PropertyGroup Condition="$([MSBuild]::IsOSPlatform('Windows')) and Exists('$(_DalamudDevHooksPath)Dalamud.dll') and !Exists('$(DalamudLibPath)Dalamud.dll')">
+        <DalamudLibPath>$(_DalamudDevHooksPath)</DalamudLibPath>
+    </PropertyGroup>
+</Project>
