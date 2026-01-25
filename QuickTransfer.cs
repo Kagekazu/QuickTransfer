@@ -153,8 +153,17 @@ public sealed unsafe class Plugin : IDalamudPlugin
     private const string InputNumericAddonName = "InputNumeric";
     private const string ContextMenuAddonName = "ContextMenu";
 
-    private bool suppressContextMenu;
-    private bool suppressInputNumeric;
+    // IMPORTANT:
+    // We suppress by forcing alpha to 0 in PreDraw, which can "stick" because the same addon instance is reused.
+    // Therefore we track suppression windows and also restore alpha when not suppressing.
+    private long suppressContextMenuUntilMs;
+    private long suppressInputNumericUntilMs;
+
+    private void ArmSuppressContextMenu(long now, int durationMs = 250)
+        => suppressContextMenuUntilMs = Math.Max(suppressContextMenuUntilMs, now + durationMs);
+
+    private void ArmSuppressInputNumeric(long now, int durationMs = 1500)
+        => suppressInputNumericUntilMs = Math.Max(suppressInputNumericUntilMs, now + durationMs);
 
     private FFXIVClientStructs.FFXIV.Client.Game.InventoryType[] GetCompanyChestInventoryTypes()
     {
@@ -376,7 +385,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
         {
             if (TryGetVisibleAddon(InputNumericAddonName, out var inputNumeric))
             {
-                suppressInputNumeric = true;
+                ArmSuppressInputNumeric(now);
                 // Phase 1: set max (and wait a frame so the component commits the value internally).
                 if (!pendingCompanyChestNumericValueSet)
                 {
@@ -386,6 +395,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
                         pendingCompanyChestNumericConfirmUntilMs = 0;
                         pendingCompanyChestNumericArmed = false;
                         pendingNumericKind = PendingNumericKind.None;
+                        suppressInputNumericUntilMs = 0;
                     }
                     else
                     {
@@ -432,7 +442,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
                         pendingCompanyChestNumericValueSet = false;
                         pendingCompanyChestNumericValueSetAtMs = 0;
                         pendingCompanyChestNumericDesired = 0;
-                        suppressInputNumeric = false;
+                        suppressInputNumericUntilMs = 0;
                     }
                     else
                     {
@@ -442,7 +452,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
                         pendingCompanyChestNumericValueSet = false;
                         pendingCompanyChestNumericValueSetAtMs = 0;
                         pendingCompanyChestNumericDesired = 0;
-                        suppressInputNumeric = false;
+                        suppressInputNumericUntilMs = 0;
                     }
                 }
                 catch (Exception ex)
@@ -453,7 +463,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
                     pendingCompanyChestNumericValueSet = false;
                     pendingCompanyChestNumericValueSetAtMs = 0;
                     pendingCompanyChestNumericDesired = 0;
-                    suppressInputNumeric = false;
+                    suppressInputNumericUntilMs = 0;
                     Log.Warning(ex, "[QuickTransfer] Failed to auto-confirm InputNumeric.");
                 }
             }
@@ -466,7 +476,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
             pendingCompanyChestNumericValueSet = false;
             pendingCompanyChestNumericValueSetAtMs = 0;
             pendingCompanyChestNumericDesired = 0;
-            suppressInputNumeric = false;
+            suppressInputNumericUntilMs = 0;
         }
 
         // If we have a pending "move outValue" buffer for InputNumeric-driven moves, free it once the dialog is gone,
@@ -526,7 +536,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
                 pendingDefault.Value.AddonName.Equals(FreeCompanyChestAddonName, StringComparison.OrdinalIgnoreCase) &&
                 Configuration.EnableCompanyChest)
             {
-                suppressContextMenu = true;
+                ArmSuppressContextMenu(now, 1500);
                 if (TrySelectRemoveFromCompanyChestContextMenu())
                 {
                     lastActionTickMs = now;
@@ -537,6 +547,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
                     pendingCompanyChestNumericValueSet = false;
                     pendingCompanyChestNumericValueSetAtMs = 0;
                     pendingCompanyChestNumericDesired = 0;
+                    ArmSuppressInputNumeric(now, 1500);
                 }
                 // Keep suppression on while the remove dialog is being handled.
             }
@@ -564,7 +575,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
             if (TryAutoSelectAndClose(agent, addon, pending.Value.Mode, out var chosenText, out var chosenIndex))
             {
                 lastActionTickMs = now;
-                suppressContextMenu = true;
+                ArmSuppressContextMenu(now, 1500);
                 if (Configuration.EnableCompanyChest &&
                     pending.Value.Mode == ModifierMode.Shift &&
                     chosenText.Length > 0 &&
@@ -577,6 +588,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
                     pendingCompanyChestNumericValueSet = false;
                     pendingCompanyChestNumericValueSetAtMs = 0;
                     pendingCompanyChestNumericDesired = 0;
+                    ArmSuppressInputNumeric(now, 1500);
                 }
                 if (Configuration.DebugMode)
                     Log.Information($"[QuickTransfer] ({pending.Value.Mode} + RClick) Selected context action '{chosenText}' (idx={chosenIndex}) via deferred OnMenuOpened.");
@@ -598,17 +610,24 @@ public sealed unsafe class Plugin : IDalamudPlugin
         try
         {
             var name = args.AddonName ?? string.Empty;
+            var now = Environment.TickCount64;
 
-            if (suppressContextMenu && string.Equals(name, ContextMenuAddonName, StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(name, ContextMenuAddonName, StringComparison.OrdinalIgnoreCase))
             {
                 var addon = (AtkUnitBase*)args.Addon.Address;
-                MakeAddonInvisible(addon);
+                if (now <= suppressContextMenuUntilMs)
+                    MakeAddonInvisible(addon);
+                else
+                    MakeAddonVisible(addon);
             }
 
-            if (suppressInputNumeric && string.Equals(name, InputNumericAddonName, StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(name, InputNumericAddonName, StringComparison.OrdinalIgnoreCase))
             {
                 var addon = (AtkUnitBase*)args.Addon.Address;
-                MakeAddonInvisible(addon);
+                if (now <= suppressInputNumericUntilMs)
+                    MakeAddonInvisible(addon);
+                else
+                    MakeAddonVisible(addon);
             }
         }
         catch
@@ -628,6 +647,19 @@ public sealed unsafe class Plugin : IDalamudPlugin
         // Keep it logically visible/interactive, but force it fully transparent before it draws.
         root->Color.A = 0;
         root->Alpha_2 = 0;
+    }
+
+    private static void MakeAddonVisible(AtkUnitBase* addon)
+    {
+        if (addon == null)
+            return;
+        var root = addon->RootNode;
+        if (root == null)
+            return;
+
+        // Restore fully visible alpha; this prevents "stuck invisible" menus after a suppression frame.
+        root->Color.A = 255;
+        root->Alpha_2 = 255;
     }
 
     private void OnInputNumericPreSetup(AddonEvent type, AddonArgs args)
