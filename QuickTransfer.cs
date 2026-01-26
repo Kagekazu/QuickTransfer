@@ -477,7 +477,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
         // List item events can provide a renderer directly.
         if (eventData != null &&
             eventType is AtkEventType.ListItemRollOver or AtkEventType.ListItemRollOut or AtkEventType.ListItemClick or
-                AtkEventType.ListItemDoubleClick or AtkEventType.ListItemHighlight or AtkEventType.ListItemSelect)
+                AtkEventType.ListItemDoubleClick or AtkEventType.ListItemSelect)
         {
             try
             {
@@ -535,18 +535,6 @@ public sealed unsafe class Plugin : IDalamudPlugin
             var ddi2 = FromIndex(list, list->HoveredItemIndex3);
             if (ddi2 != null)
                 return ddi2;
-
-            // If a drag is in progress, prefer the dragging renderer.
-            try
-            {
-                var dragging = list->DraggingListItemRenderer;
-                if (dragging != null)
-                    return &dragging->AtkDragDropInterface;
-            }
-            catch
-            {
-                // ignore
-            }
 
             return null;
         }
