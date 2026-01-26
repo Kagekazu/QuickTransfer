@@ -1,12 +1,18 @@
 # QuickTransfer - FFXIV Quick Transfer Plugin
 
-A Dalamud plugin for Final Fantasy XIV that enables quick item transfer between inventory containers using **Shift + Right-Click**, by automatically selecting an existing entry from the game's context menu.
+A Dalamud plugin for Final Fantasy XIV that adds quick inventory actions via the game's existing context menus:
+
+- **Shift + Right Click**: quick transfers
+- **Ctrl + Right Click**: armoury-mode transfers (when a special container is open)
+- **Alt + Right Click**: split a stack in half
 
 ## Features
 
 - **Quick Transfer**: Hold Shift and right-click an item to automatically trigger the matching context menu action
+- **Armoury Mode**: Hold Ctrl and right-click to prioritize armoury actions while a special container is open
+- **Split Half**: Hold Alt and right-click to split a stack and auto-fill half
 - **Cooldown Protection**: Built-in cooldown to prevent accidental double-moves
-- **Debug Mode**: For troubleshooting and development
+- **Debug Mode**: For troubleshooting and development (disabled by default)
 
 ## Installation
 
@@ -52,6 +58,17 @@ The plugin only clicks **existing** context menu options when they are available
 
 If an option is not present for the clicked item, **nothing happens**.
 
+### Armoury Mode (Ctrl + Right Click)
+
+- While a **Saddlebag**, **Retainer**, or **Company Chest** is open, **Ctrl + Right Click** will prioritize:
+  - Inventory gear → **Place in Armoury Chest**
+  - Armoury gear → **Return to Inventory**
+
+### Split Stack (Alt + Right Click)
+
+- **Alt + Right Click** a **stackable** item to select the existing **Split** context menu action.
+- If **Auto-confirm quantity prompts** is enabled, QuickTransfer will enter **half** and confirm automatically.
+
 ### Middle-Click Sort / Organize (MMB)
 
 - For inventories that include a **Sort** entry in the item context menu, **middle-click an item** to auto-select **Sort** (without showing the menu).
@@ -65,6 +82,8 @@ If an option is not present for the clicked item, **nothing happens**.
 | Debug Mode | Log transfer attempts to chat | False |
 | Transfer Cooldown | Milliseconds between transfers | 200 |
 | Enable Middle-Click Sort | Enable MMB sort behavior | True |
+| Enable Company Chest | Enable FC chest helpers | True |
+| Auto-confirm quantity prompts | Auto-fill and confirm InputNumeric prompts (Split / FC chest) | True |
 | Company Chest: Middle-Click Organize | Enable MMB organize (stack+compact) in FC chest | True |
 
 ## Development
@@ -164,6 +183,10 @@ This plugin is licensed under the MIT License - see the `LICENSE` file for detai
 - **Contributors**: Thanks to everyone who has contributed to this project
 
 ## Changelog
+
+### Version 1.0.3
+- Fix: inventory **Alt+RightClick Split** now reliably auto-fills **half** (including InventoryExpansion / localized prompts)
+- Change: **Debug Mode is disabled by default** (and migrated off on update)
 
 ### Version 1.0.0
 - Initial release

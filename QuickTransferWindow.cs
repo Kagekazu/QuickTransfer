@@ -71,7 +71,7 @@ public class QuickTransferWindow : Window, IDisposable
                 _config.Save();
             }
             ImGui.SameLine();
-            ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 0.7f), "(Shift: deposit/withdraw while FC chest is open)");
+            ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 0.7f), "(Shift/Alt: deposit/withdraw while FC chest is open)");
 
             var mmbCompanyOrganize = _config.EnableCompanyChestMiddleClickOrganize;
             if (ImGui.Checkbox("Company Chest: Middle-Click Organize###EnableCompanyChestMiddleClickOrganize", ref mmbCompanyOrganize))
@@ -83,7 +83,7 @@ public class QuickTransferWindow : Window, IDisposable
             ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 0.7f), "(MMB: auto-stack + compact in FC chest)");
 
             var autoConfirmQty = _config.AutoConfirmCompanyChestQuantity;
-            if (ImGui.Checkbox("Auto-confirm Company Chest quantity prompt###AutoConfirmCompanyChestQty", ref autoConfirmQty))
+            if (ImGui.Checkbox("Auto-confirm quantity prompts (Company Chest / Split)###AutoConfirmCompanyChestQty", ref autoConfirmQty))
             {
                 _config.AutoConfirmCompanyChestQuantity = autoConfirmQty;
                 _config.Save();
@@ -110,6 +110,7 @@ public class QuickTransferWindow : Window, IDisposable
             ImGui.TextColored(new Vector4(0.4f, 0.8f, 1f, 1f), "How to Use:");
             ImGui.BulletText("Hold SHIFT and RIGHT-CLICK to use the open container's quick action");
             ImGui.BulletText("Hold CTRL and RIGHT-CLICK to use Armoury actions when a Saddlebag, Retainer, or Company Chest is open (Inventory ↔ Armoury)");
+            ImGui.BulletText("Hold ALT and RIGHT-CLICK to split a stack in half (or remove half from Company Chest)");
             ImGui.BulletText("Inventory + Saddlebags: Inventory → \"Add All to Saddlebag\", Saddlebags → \"Remove All from Saddlebag\"");
             ImGui.BulletText("Armoury + Saddlebags: Armoury → \"Add All to Saddlebag\"");
             ImGui.BulletText("Inventory + Retainer: Inventory → \"Entrust to Retainer\", Retainer → \"Retrieve from Retainer\"");

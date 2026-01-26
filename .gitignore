@@ -84,3 +84,6 @@ sqpack/
 # Dalamud specific
 addon/
 hooks/
+
+# Crash unpack artifacts (local)
+crash_unpack_*/
