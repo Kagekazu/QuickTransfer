@@ -53,6 +53,16 @@ public class QuickTransferWindow : Window, IDisposable
             
             ImGui.Spacing();
 
+            // Middle-click sort
+            var mmbSort = _config.EnableMiddleClickSort;
+            if (ImGui.Checkbox("Enable Middle-Click Sort###EnableMiddleClickSort", ref mmbSort))
+            {
+                _config.EnableMiddleClickSort = mmbSort;
+                _config.Save();
+            }
+            ImGui.SameLine();
+            ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 0.7f), "(MMB on an item: auto-select \"Sort\" when available)");
+
             // Company Chest
             var enableCompanyChest = _config.EnableCompanyChest;
             if (ImGui.Checkbox("Enable Company Chest (Free Company Chest)###EnableCompanyChest", ref enableCompanyChest))
@@ -62,6 +72,15 @@ public class QuickTransferWindow : Window, IDisposable
             }
             ImGui.SameLine();
             ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 0.7f), "(Shift: deposit/withdraw while FC chest is open)");
+
+            var mmbCompanyOrganize = _config.EnableCompanyChestMiddleClickOrganize;
+            if (ImGui.Checkbox("Company Chest: Middle-Click Organize###EnableCompanyChestMiddleClickOrganize", ref mmbCompanyOrganize))
+            {
+                _config.EnableCompanyChestMiddleClickOrganize = mmbCompanyOrganize;
+                _config.Save();
+            }
+            ImGui.SameLine();
+            ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 0.7f), "(MMB: auto-stack + compact in FC chest)");
 
             var autoConfirmQty = _config.AutoConfirmCompanyChestQuantity;
             if (ImGui.Checkbox("Auto-confirm Company Chest quantity prompt###AutoConfirmCompanyChestQty", ref autoConfirmQty))
@@ -98,6 +117,7 @@ public class QuickTransferWindow : Window, IDisposable
             ImGui.BulletText("Retainer + Saddlebags: Retainer → \"Add All to Saddlebag\", Saddlebags → \"Entrust to Retainer\"");
             ImGui.BulletText("Inventory + Armoury (no special container): (Gear) Inventory → \"Place in Armoury Chest\", Armoury → \"Return to Inventory\"");
             ImGui.BulletText("Company Chest (FreeCompanyChest) open: Shift+RClick Inventory/Armoury deposits, Shift+RClick Company Chest withdraws (\"Remove\")");
+            ImGui.BulletText("Middle-Click: Sort the clicked container when a \"Sort\" menu entry exists. In Company Chest, MMB runs an organize pass (stack + compact).");
             ImGui.BulletText("Use /qt or click 'Open Config' in plugin list to reopen this window");
             
             ImGui.Spacing();

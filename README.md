@@ -52,6 +52,11 @@ The plugin only clicks **existing** context menu options when they are available
 
 If an option is not present for the clicked item, **nothing happens**.
 
+### Middle-Click Sort / Organize (MMB)
+
+- For inventories that include a **Sort** entry in the item context menu, **middle-click an item** to auto-select **Sort** (without showing the menu).
+- In the **Free Company Chest**, item context menus do not include Sort, so **middle-click** will run an **organize pass** (auto-stack + compact).
+
 ## Configuration Options
 
 | Setting | Description | Default |
@@ -59,6 +64,8 @@ If an option is not present for the clicked item, **nothing happens**.
 | Enabled | Enable/disable the plugin | True |
 | Debug Mode | Log transfer attempts to chat | False |
 | Transfer Cooldown | Milliseconds between transfers | 200 |
+| Enable Middle-Click Sort | Enable MMB sort behavior | True |
+| Company Chest: Middle-Click Organize | Enable MMB organize (stack+compact) in FC chest | True |
 
 ## Development
 

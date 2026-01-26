@@ -8,9 +8,9 @@
         <RootNamespace>QuickTransfer</RootNamespace>
         <OutputType>Library</OutputType>
         <IsPackable>false</IsPackable>
-        <Version>1.0.1</Version>
-        <AssemblyVersion>1.0.1.0</AssemblyVersion>
-        <FileVersion>1.0.1.0</FileVersion>
+        <Version>1.0.2</Version>
+        <AssemblyVersion>1.0.2.0</AssemblyVersion>
+        <FileVersion>1.0.2.0</FileVersion>
     </PropertyGroup>
 
     <!-- Local builds: some setups have DALAMUD_HOME pointing at the XIVLauncher root,

@@ -3,7 +3,7 @@
     "Author": "flick",
     "Name": "QuickTransfer",
     "InternalName": "QuickTransfer",
-    "AssemblyVersion": "1.0.1.0",
+    "AssemblyVersion": "1.0.2.0",
     "Description": "Automate inventory transfers with Shift/Ctrl + Right-Click.",
     "ApplicableVersion": "any",
     "RepoUrl": "https://github.com/Knack117/QuickTransfer",

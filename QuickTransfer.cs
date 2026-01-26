@@ -33,6 +33,9 @@ public sealed class Configuration : IPluginConfiguration
     public bool DebugMode { get; set; } = false;
     public int TransferCooldownMs { get; set; } = 200;
 
+    public bool EnableMiddleClickSort { get; set; } = true;
+    public bool EnableCompanyChestMiddleClickOrganize { get; set; } = true;
+
     public bool EnableCompanyChest { get; set; } = true;
     public bool AutoConfirmCompanyChestQuantity { get; set; } = true;
     public int CompanyChestCompartments { get; set; } = 3; // 3..5 (default game starts at 3)
@@ -63,6 +66,11 @@ public sealed unsafe class Plugin : IDalamudPlugin
     private long lastActionTickMs;
     private (nint AgentPtr, nint AddonPtr, long EnqueuedAtMs, ModifierMode Mode)? pendingDeferredMenuClick;
     private (string AddonName, long EnqueuedAtMs, ModifierMode Mode)? pendingDeferredDefaultMenu;
+    private (nint AgentPtr, nint AddonPtr, long EnqueuedAtMs)? pendingDeferredSortMenuClick;
+    private long pendingMiddleClickSortUntilMs;
+    private (FFXIVClientStructs.FFXIV.Client.Game.InventoryType Type, int Slot, uint AddonId, long EnqueuedAtMs)? pendingMiddleClickSortRequest;
+    private long lastMiddleClickSortMs;
+
     private long pendingCompanyChestNumericConfirmUntilMs;
     private int pendingCompanyChestNumericConfirmAttempts;
     private long pendingCloseContextMenuAtMs;
@@ -70,7 +78,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
     private bool pendingCompanyChestNumericValueSet;
     private long pendingCompanyChestNumericValueSetAtMs;
     private uint pendingCompanyChestNumericDesired;
-    private enum PendingNumericKind { None, Store, Remove }
+    private enum PendingNumericKind { None, Store, Remove, Move }
     private PendingNumericKind pendingNumericKind;
 
     private long lastShiftSeenMs;
@@ -100,6 +108,17 @@ public sealed unsafe class Plugin : IDalamudPlugin
     }
 
     private CompanyChestDepositState companyChestDeposit;
+
+    private struct CompanyChestOrganizeState
+    {
+        public bool Active;
+        public long NextAttemptAtMs;
+        public long ExpiresAtMs;
+        public int Steps;
+        public int Phase; // 0=stack, 1=compact
+    }
+
+    private CompanyChestOrganizeState companyChestOrganize;
 
     private enum ModifierMode
     {
@@ -136,6 +155,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
         EntrustToRetainer,
         RetrieveFromRetainer,
         RemoveFromCompanyChest,
+        Sort,
     }
 
     private static readonly string[] ArmouryAddonNames =
@@ -203,6 +223,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
         // Register without a name-filter so we can confirm it fires on this client build.
         AddonLifecycle.RegisterListener(AddonEvent.PreSetup, OnInputNumericPreSetup);
         AddonLifecycle.RegisterListener(AddonEvent.PreDraw, OnAddonPreDraw);
+        AddonLifecycle.RegisterListener(AddonEvent.PreReceiveEvent, OnAddonReceiveEvent);
 
         Log.Information($"Loaded {PluginInterface.Manifest.Name}.");
         Log.Information($"[QuickTransfer] DebugMode={Configuration.DebugMode}, Enabled={Configuration.Enabled}");
@@ -230,6 +251,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
         ContextMenu.OnMenuOpened -= OnContextMenuOpened;
         AddonLifecycle.UnregisterListener(AddonEvent.PreSetup, OnInputNumericPreSetup);
         AddonLifecycle.UnregisterListener(AddonEvent.PreDraw, OnAddonPreDraw);
+        AddonLifecycle.UnregisterListener(AddonEvent.PreReceiveEvent, OnAddonReceiveEvent);
 
         openForItemSlotHook?.Disable();
         openForItemSlotHook?.Dispose();
@@ -327,9 +349,10 @@ public sealed unsafe class Plugin : IDalamudPlugin
             return;
 
         var now = Environment.TickCount64;
-        var mode = GetModifierModeLatched(now);
+        var middleSortActive = pendingMiddleClickSortUntilMs > 0 && now <= pendingMiddleClickSortUntilMs;
+        var mode = middleSortActive ? null : GetModifierModeLatched(now);
 
-        if (mode == null)
+        if (!middleSortActive && mode == null)
             return;
 
         var saddlebagOpen = IsSaddlebagOpen();
@@ -337,11 +360,21 @@ public sealed unsafe class Plugin : IDalamudPlugin
         var companyChestOpen = IsCompanyChestOpen();
         var specialOpen = saddlebagOpen || retainerOpen || companyChestOpen;
 
-        if (mode == ModifierMode.Ctrl && !specialOpen)
+        if (!middleSortActive && mode == ModifierMode.Ctrl && !specialOpen)
             return;
 
         if (Configuration.DebugMode)
             Log.Information($"[QuickTransfer] OnMenuOpened: AddonName='{args.AddonName}', MenuType={args.MenuType}, AgentPtr=0x{args.AgentPtr.ToInt64():X}, AddonPtr=0x{args.AddonPtr.ToInt64():X}");
+
+        // Middle-click "Sort" uses an inventory context menu, but does not require Shift/Ctrl.
+        if (middleSortActive && args.MenuType == ContextMenuType.Inventory)
+        {
+            if (args.AgentPtr != IntPtr.Zero && args.AddonPtr != IntPtr.Zero)
+            {
+                pendingDeferredSortMenuClick = ((nint)args.AgentPtr, (nint)args.AddonPtr, now);
+                return;
+            }
+        }
 
         // Free Company Chest uses MenuType.Default (not Inventory).
         if (args.MenuType == ContextMenuType.Default &&
@@ -358,6 +391,9 @@ public sealed unsafe class Plugin : IDalamudPlugin
             return;
 
         if (args.AgentPtr == IntPtr.Zero || args.AddonPtr == IntPtr.Zero)
+            return;
+
+        if (mode == null)
             return;
 
         // IMPORTANT: Do not click inside the open event (re-entrancy risk).
@@ -506,6 +542,48 @@ public sealed unsafe class Plugin : IDalamudPlugin
         if (Configuration.EnableCompanyChest)
             ProcessCompanyChestDeposit(now);
 
+        // Company Chest organize (MMB): auto-stack + compact items within FC chest pages.
+        if (Configuration.EnableCompanyChest && Configuration.EnableCompanyChestMiddleClickOrganize)
+            ProcessCompanyChestOrganize(now);
+
+        // Middle-click sort: open the context menu on the clicked slot, then auto-select "Sort".
+        var mmb = pendingMiddleClickSortRequest;
+        if (Configuration.EnableMiddleClickSort && mmb != null && now - mmb.Value.EnqueuedAtMs <= 1500)
+        {
+            // If the request was for Company Chest, run organize instead (there is no Sort entry on the item menu).
+            if (IsCompanyChestType(mmb.Value.Type) && Configuration.EnableCompanyChest && Configuration.EnableCompanyChestMiddleClickOrganize)
+            {
+                StartCompanyChestOrganize(now);
+                pendingMiddleClickSortRequest = null;
+                pendingMiddleClickSortUntilMs = 0;
+            }
+            else
+            {
+                // Open context menu for that slot. Our OnMenuOpened handler will enqueue the deferred sort selection.
+                var agentModule = AgentModule.Instance();
+                if (agentModule != null)
+                {
+                    var agent = agentModule->GetAgentByInternalId(AgentId.InventoryContext);
+                    var invCtx = (AgentInventoryContext*)agent;
+                    if (invCtx != null)
+                    {
+                        try
+                        {
+                            ArmSuppressContextMenu(now, 250);
+                            invCtx->OpenForItemSlot(mmb.Value.Type, mmb.Value.Slot, 0, mmb.Value.AddonId);
+                        }
+                        catch
+                        {
+                            // ignore
+                        }
+                    }
+                }
+
+                // Only try once; selection happens via deferred menu click.
+                pendingMiddleClickSortRequest = null;
+            }
+        }
+
         // Delay-close the context menu slightly; closing immediately can cancel some default-menu actions.
         if (pendingCloseContextMenuAtMs > 0 && now >= pendingCloseContextMenuAtMs)
         {
@@ -555,7 +633,11 @@ public sealed unsafe class Plugin : IDalamudPlugin
 
         var pending = pendingDeferredMenuClick;
         if (pending == null)
+        {
+            // Process deferred middle-click sort selection even if no normal deferred click.
+            ProcessDeferredSortMenuClick(now);
             return;
+        }
 
         // Consume (only try once).
         pendingDeferredMenuClick = null;
@@ -603,6 +685,45 @@ public sealed unsafe class Plugin : IDalamudPlugin
         {
             Log.Warning(ex, "[QuickTransfer] Deferred menu select failed.");
         }
+
+        // Also process a pending sort click (if any) after normal transfers.
+        ProcessDeferredSortMenuClick(now);
+    }
+
+    private void ProcessDeferredSortMenuClick(long now)
+    {
+        var pendingSort = pendingDeferredSortMenuClick;
+        if (pendingSort == null)
+            return;
+
+        pendingDeferredSortMenuClick = null;
+        pendingMiddleClickSortUntilMs = 0;
+
+        if (now - pendingSort.Value.EnqueuedAtMs > 1500)
+            return;
+
+        try
+        {
+            var agent = (AgentInventoryContext*)pendingSort.Value.AgentPtr;
+            var addon = (AtkUnitBase*)pendingSort.Value.AddonPtr;
+
+            if (TrySelectSortAndClose(agent, addon, out var chosenText, out var chosenIndex))
+            {
+                lastActionTickMs = now;
+                ArmSuppressContextMenu(now, 500);
+                if (Configuration.DebugMode)
+                    Log.Information($"[QuickTransfer] (MMB) Selected context action '{chosenText}' (idx={chosenIndex}) via deferred OnMenuOpened.");
+            }
+            else
+            {
+                // If we opened a menu but didn't find Sort, close it to avoid leaving a hidden menu behind.
+                try { CloseContextMenuAddon(agent, addon); } catch { /* ignore */ }
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "[QuickTransfer] Deferred sort select failed.");
+        }
     }
 
     private void OnAddonPreDraw(AddonEvent type, AddonArgs args)
@@ -629,6 +750,79 @@ public sealed unsafe class Plugin : IDalamudPlugin
                 else
                     MakeAddonVisible(addon);
             }
+        }
+        catch
+        {
+            // ignore
+        }
+    }
+
+    private void OnAddonReceiveEvent(AddonEvent type, AddonArgs args)
+    {
+        try
+        {
+            if (!Configuration.Enabled || !Configuration.EnableMiddleClickSort)
+                return;
+
+            if (args is not AddonReceiveEventArgs recv)
+                return;
+
+            var now = Environment.TickCount64;
+            if (now - lastMiddleClickSortMs < 250)
+                return;
+
+            var eventType = (AtkEventType)recv.AtkEventType;
+            if (eventType != AtkEventType.DragDropClick && eventType != AtkEventType.MouseClick && eventType != AtkEventType.MouseDown)
+                return;
+
+            var eventData = (AtkEventData*)recv.AtkEventData;
+            if (eventData == null)
+                return;
+
+            // Inventory slots are drag-drop components; use drag-drop mouse button id when available.
+            var buttonId = eventType == AtkEventType.DragDropClick ? eventData->DragDropData.MouseButtonId : eventData->MouseData.ButtonId;
+            const byte middleButtonId = 2;
+            if (buttonId != middleButtonId)
+                return;
+
+            var ddi = eventData->DragDropData.DragDropInterface;
+            if (ddi == null)
+                return;
+
+            var payload = ddi->GetPayloadContainer();
+            if (payload == null)
+                return;
+
+            var invType = (FFXIVClientStructs.FFXIV.Client.Game.InventoryType)payload->Int1;
+            var slot = payload->Int2;
+            if (slot < 0 || slot > 500)
+                return;
+
+            // Only act on inventory containers we understand (avoid hotbars, etc.).
+            if (!IsPlayerInventoryType(invType) && !IsArmouryType(invType) && !IsSaddlebagType(invType) && !IsRetainerType(invType) && !IsCompanyChestType(invType))
+                return;
+
+            // Require a real item slot unless it's Company Chest (organize operates on whole chest).
+            if (!IsCompanyChestType(invType))
+            {
+                if (!TryGetItemInfo(invType, slot, out var itemId, out _, out _))
+                    return;
+                if (itemId == 0)
+                    return;
+            }
+
+            var addon = (AtkUnitBase*)args.Addon.Address;
+            if (addon == null)
+                return;
+
+            pendingMiddleClickSortRequest = (invType, slot, addon->Id, now);
+            pendingMiddleClickSortUntilMs = now + 1500;
+            lastMiddleClickSortMs = now;
+
+            // Prevent the underlying UI from processing the click further.
+            var atkEvent = (AtkEvent*)recv.AtkEvent;
+            if (atkEvent != null)
+                atkEvent->SetEventIsHandled();
         }
         catch
         {
@@ -698,6 +892,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
                     return;
                 if (pendingNumericKind == PendingNumericKind.Remove && !prompt.Contains("remove", StringComparison.OrdinalIgnoreCase))
                     return;
+                // For "Move" we accept any prompt while the Company Chest is open (used for internal stack/organize moves).
             }
 
             // Standard InputNumeric layout (also used by SimpleTweaks):
@@ -920,6 +1115,35 @@ public sealed unsafe class Plugin : IDalamudPlugin
         return true;
     }
 
+    private bool TrySelectSortAndClose(AgentInventoryContext* agent, AtkUnitBase* contextMenuAddon, out string chosenText, out int chosenIndex)
+    {
+        chosenText = string.Empty;
+        chosenIndex = -1;
+
+        var max = Math.Min(agent->ContextItemCount, 64);
+        for (var i = 0; i < max; i++)
+        {
+            var param = agent->EventParams[agent->ContexItemStartIndex + i];
+            if (param.Type is not (AtkValueType.String or AtkValueType.ManagedString))
+                continue;
+
+            var text = ReadAtkValueString(param);
+            if (string.IsNullOrWhiteSpace(text))
+                continue;
+
+            if (!ContextLabelMatches(AutoContextAction.Sort, text))
+                continue;
+
+            GenerateCallback(contextMenuAddon, 0, i, 0U, 0, 0);
+            CloseContextMenuAddon(agent, contextMenuAddon);
+            chosenText = text;
+            chosenIndex = i;
+            return true;
+        }
+
+        return false;
+    }
+
     private bool StartCompanyChestDeposit(FFXIVClientStructs.FFXIV.Client.Game.InventoryType sourceType, uint sourceSlot)
     {
         try
@@ -1059,6 +1283,256 @@ public sealed unsafe class Plugin : IDalamudPlugin
 
         if (Configuration.DebugMode)
             Log.Information($"[QuickTransfer] (Shift+RClick) Company Chest deposit step {companyChestDeposit.Steps}: {companyChestDeposit.SourceType} slot={companyChestDeposit.SourceSlot} -> {destType} slot={destSlot} (qty={qty}, stackMax={maxStack}).");
+    }
+
+    private void StartCompanyChestOrganize(long now)
+    {
+        if (!Configuration.EnableCompanyChest || !IsCompanyChestOpen() || RaptureAtkModule.Instance() == null)
+            return;
+
+        companyChestOrganize = new CompanyChestOrganizeState
+        {
+            Active = true,
+            NextAttemptAtMs = now,
+            ExpiresAtMs = now + 20000,
+            Steps = 0,
+            Phase = 0,
+        };
+    }
+
+    private void ProcessCompanyChestOrganize(long now)
+    {
+        if (!companyChestOrganize.Active)
+            return;
+
+        if (!Configuration.EnableCompanyChest || RaptureAtkModule.Instance() == null || !IsCompanyChestOpen())
+        {
+            companyChestOrganize.Active = false;
+            return;
+        }
+
+        if (now >= companyChestOrganize.ExpiresAtMs || companyChestOrganize.Steps >= 80)
+        {
+            companyChestOrganize.Active = false;
+            return;
+        }
+
+        if (TryGetVisibleAddon(InputNumericAddonName, out _))
+            return;
+
+        if (now < companyChestOrganize.NextAttemptAtMs)
+            return;
+
+        var pages = GetCompanyChestInventoryTypes();
+        if (pages.Length == 0)
+        {
+            companyChestOrganize.Active = false;
+            return;
+        }
+
+        // Phase 0: merge stacks where possible.
+        if (companyChestOrganize.Phase == 0)
+        {
+            if (TryFindCompanyChestMergeMove(pages, out var srcType, out var srcSlot, out var dstType, out var dstSlot, out var needsNumeric))
+            {
+                if (!TryCompanyChestMoveItem(srcType, srcSlot, dstType, dstSlot, needsNumeric))
+                {
+                    companyChestOrganize.Active = false;
+                    return;
+                }
+
+                companyChestOrganize.Steps++;
+                companyChestOrganize.NextAttemptAtMs = now + (needsNumeric ? 650 : 350);
+
+                if (Configuration.AutoConfirmCompanyChestQuantity && needsNumeric)
+                {
+                    pendingCompanyChestNumericConfirmUntilMs = now + 1500;
+                    pendingCompanyChestNumericConfirmAttempts = 0;
+                    pendingCompanyChestNumericArmed = true;
+                    pendingNumericKind = PendingNumericKind.Move;
+                    pendingCompanyChestNumericValueSet = false;
+                    pendingCompanyChestNumericValueSetAtMs = 0;
+                    pendingCompanyChestNumericDesired = 0;
+                    ArmSuppressInputNumeric(now, 1500);
+                }
+
+                if (Configuration.DebugMode)
+                    Log.Information($"[QuickTransfer] (MMB) Company Chest organize step {companyChestOrganize.Steps}: {srcType} slot={srcSlot} -> {dstType} slot={dstSlot} (phase=stack, numeric={needsNumeric}).");
+                return;
+            }
+
+            // No more merges; move on to compaction.
+            companyChestOrganize.Phase = 1;
+        }
+
+        // Phase 1: compact items to fill empty slots from the start.
+        if (TryFindCompanyChestCompactionMove(pages, out var cSrcType, out var cSrcSlot, out var cDstType, out var cDstSlot))
+        {
+            if (!TryCompanyChestMoveItem(cSrcType, cSrcSlot, cDstType, cDstSlot, keepAliveForInputNumeric: false))
+            {
+                companyChestOrganize.Active = false;
+                return;
+            }
+
+            companyChestOrganize.Steps++;
+            companyChestOrganize.NextAttemptAtMs = now + 250;
+
+            if (Configuration.DebugMode)
+                Log.Information($"[QuickTransfer] (MMB) Company Chest organize step {companyChestOrganize.Steps}: {cSrcType} slot={cSrcSlot} -> {cDstType} slot={cDstSlot} (phase=compact).");
+            return;
+        }
+
+        // Done.
+        companyChestOrganize.Active = false;
+    }
+
+    private bool TryFindCompanyChestMergeMove(
+        FFXIVClientStructs.FFXIV.Client.Game.InventoryType[] pages,
+        out FFXIVClientStructs.FFXIV.Client.Game.InventoryType srcType,
+        out uint srcSlot,
+        out FFXIVClientStructs.FFXIV.Client.Game.InventoryType dstType,
+        out uint dstSlot,
+        out bool needsNumeric)
+    {
+        srcType = default;
+        srcSlot = 0;
+        dstType = default;
+        dstSlot = 0;
+        needsNumeric = false;
+
+        var inv = InventoryManager.Instance();
+        if (inv == null)
+            return false;
+
+        const int slotCap = 80;
+
+        // Find a destination stack with free space, then a later source stack of same item to merge.
+        foreach (var dt in pages)
+        {
+            for (var di = 0; di < slotCap; di++)
+            {
+                var d = inv->GetInventorySlot(dt, di);
+                if (d == null)
+                    break;
+                if (d->ItemId == 0 || d->Quantity <= 0)
+                    continue;
+
+                var itemId = d->ItemId;
+                var isHq = d->Flags.HasFlag(InventoryItem.ItemFlags.HighQuality);
+                var maxStack = GetItemStackSize(itemId);
+                if (maxStack <= 1)
+                    continue;
+
+                var free = (int)maxStack - d->Quantity;
+                if (free <= 0)
+                    continue;
+
+                // Find a later stack to merge into this one.
+                var foundDest = false;
+                var destGlobalIndex = 0;
+                for (var pi = 0; pi < pages.Length; pi++)
+                {
+                    if (pages[pi] != dt) continue;
+                    destGlobalIndex = pi * slotCap + di;
+                    foundDest = true;
+                    break;
+                }
+                if (!foundDest)
+                    continue;
+
+                for (var p = 0; p < pages.Length; p++)
+                {
+                    var st = pages[p];
+                    for (var si = 0; si < slotCap; si++)
+                    {
+                        var s = inv->GetInventorySlot(st, si);
+                        if (s == null)
+                            break;
+                        if (s->ItemId == 0 || s->Quantity <= 0)
+                            continue;
+                        if (s->ItemId != itemId)
+                            continue;
+                        var sHq = s->Flags.HasFlag(InventoryItem.ItemFlags.HighQuality);
+                        if (sHq != isHq)
+                            continue;
+
+                        var srcGlobalIndex = p * slotCap + si;
+                        if (srcGlobalIndex <= destGlobalIndex)
+                            continue;
+                        if (st == dt && si == di)
+                            continue;
+
+                        // Merging stacks usually prompts for quantity.
+                        srcType = st;
+                        srcSlot = (uint)si;
+                        dstType = dt;
+                        dstSlot = (uint)di;
+                        needsNumeric = s->Quantity > 1;
+                        return true;
+                    }
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private static bool TryFindCompanyChestCompactionMove(
+        FFXIVClientStructs.FFXIV.Client.Game.InventoryType[] pages,
+        out FFXIVClientStructs.FFXIV.Client.Game.InventoryType srcType,
+        out uint srcSlot,
+        out FFXIVClientStructs.FFXIV.Client.Game.InventoryType dstType,
+        out uint dstSlot)
+    {
+        srcType = default;
+        srcSlot = 0;
+        dstType = default;
+        dstSlot = 0;
+
+        var inv = InventoryManager.Instance();
+        if (inv == null)
+            return false;
+
+        const int slotCap = 80;
+
+        // Find first empty, then next non-empty after it.
+        for (var dp = 0; dp < pages.Length; dp++)
+        {
+            var dt = pages[dp];
+            for (var di = 0; di < slotCap; di++)
+            {
+                var d = inv->GetInventorySlot(dt, di);
+                if (d == null)
+                    break;
+                if (d->ItemId != 0)
+                    continue;
+
+                // Found empty destination.
+                for (var sp = dp; sp < pages.Length; sp++)
+                {
+                    var st = pages[sp];
+                    var start = sp == dp ? di + 1 : 0;
+                    for (var si = start; si < slotCap; si++)
+                    {
+                        var s = inv->GetInventorySlot(st, si);
+                        if (s == null)
+                            break;
+                        if (s->ItemId == 0 || s->Quantity <= 0)
+                            continue;
+
+                        srcType = st;
+                        srcSlot = (uint)si;
+                        dstType = dt;
+                        dstSlot = (uint)di;
+                        return true;
+                    }
+                }
+
+                return false;
+            }
+        }
+
+        return false;
     }
 
     private bool TryCompanyChestMoveItem(
@@ -1886,6 +2360,10 @@ public sealed unsafe class Plugin : IDalamudPlugin
                 t.Equals("Remove", StringComparison.OrdinalIgnoreCase) ||
                 (Has(t, "Remove") && (Has(t, "Company") || Has(t, "Chest"))) ||
                 (Has(t, "Withdraw") && (Has(t, "Company") || Has(t, "Chest"))),
+
+            AutoContextAction.Sort =>
+                t.Equals("Sort", StringComparison.OrdinalIgnoreCase) ||
+                t.StartsWith("Sort", StringComparison.OrdinalIgnoreCase),
 
             _ => false,
         };
