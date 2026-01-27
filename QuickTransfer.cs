@@ -1148,7 +1148,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
     // Then we can recognize the correct InputNumeric without relying on prompt text.
     private uint pendingSplitExpectedMax;
     private long pendingSplitExpectedUntilMs;
-    private enum PendingNumericKind { None, Store, Remove, Move, Split }
+    private enum PendingNumericKind { None, Store, Remove, Move, Split, Trade }
     private PendingNumericKind pendingNumericKind;
 
     private long lastShiftSeenMs;
@@ -1287,6 +1287,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
         RemoveFromCompanyChest,
         Split,
         Sort,
+        Trade,
     }
 
     private static readonly string[] ArmouryAddonNames =
@@ -1899,6 +1900,23 @@ public sealed unsafe class Plugin : IDalamudPlugin
             lastActionTickMs = now;
             if (Configuration.DebugMode)
                 Log.Information($"[QuickTransfer] ({mode} + RClick) Selected context action '{chosenText}' (idx={chosenIndex}) via OpenForItemSlot.");
+            
+            // Set up Trade quantity auto-confirm if Trade was selected
+            if (mode == ModifierMode.Shift &&
+                chosenText.Length > 0 &&
+                ContextLabelMatches(AutoContextAction.Trade, chosenText) &&
+                IsTradeOpen())
+            {
+                pendingCompanyChestNumericConfirmUntilMs = now + 1500;
+                pendingCompanyChestNumericConfirmAttempts = 0;
+                pendingCompanyChestNumericArmed = true;
+                pendingNumericKind = PendingNumericKind.Trade;
+                pendingCompanyChestNumericValueSet = false;
+                pendingCompanyChestNumericValueSetAtMs = 0;
+                pendingCompanyChestNumericDesired = 0;
+                pendingCompanyChestNumericHalf = false;
+                ArmSuppressInputNumeric(now, 1500);
+            }
         }
         else if (Configuration.DebugMode && mode == ModifierMode.Ctrl)
         {
@@ -2014,7 +2032,12 @@ public sealed unsafe class Plugin : IDalamudPlugin
             lastAltSeenMs = now;
 
         // Quantity prompt auto-confirm (best effort).
-        if (Configuration.AutoConfirmCompanyChestQuantity &&
+        // Trade and Split always auto-confirm; Company Chest respects the config setting.
+        var shouldAutoConfirm = pendingNumericKind == PendingNumericKind.Trade ||
+                                pendingNumericKind == PendingNumericKind.Split ||
+                                (Configuration.AutoConfirmCompanyChestQuantity && pendingNumericKind != PendingNumericKind.None);
+        
+        if (shouldAutoConfirm &&
             pendingNumericKind != PendingNumericKind.None &&
             pendingCompanyChestNumericConfirmUntilMs > 0 &&
             now <= pendingCompanyChestNumericConfirmUntilMs)
@@ -2422,6 +2445,21 @@ public sealed unsafe class Plugin : IDalamudPlugin
                     ? 3000
                     : 1500;
                 ArmSuppressContextMenu(now, suppressMs);
+                if (pending.Value.Mode == ModifierMode.Shift &&
+                    chosenText.Length > 0 &&
+                    ContextLabelMatches(AutoContextAction.Trade, chosenText))
+                {
+                    // Trade: auto-confirm max quantity when InputNumeric appears
+                    pendingCompanyChestNumericConfirmUntilMs = now + 1500;
+                    pendingCompanyChestNumericConfirmAttempts = 0;
+                    pendingCompanyChestNumericArmed = true;
+                    pendingNumericKind = PendingNumericKind.Trade;
+                    pendingCompanyChestNumericValueSet = false;
+                    pendingCompanyChestNumericValueSetAtMs = 0;
+                    pendingCompanyChestNumericDesired = 0;
+                    pendingCompanyChestNumericHalf = false;
+                    ArmSuppressInputNumeric(now, 1500);
+                }
                 if (Configuration.EnableCompanyChest &&
                     pending.Value.Mode == ModifierMode.Shift &&
                     chosenText.Length > 0 &&
@@ -2969,8 +3007,8 @@ public sealed unsafe class Plugin : IDalamudPlugin
         // Single-pass: decode each label once, record first match per action.
         var foundAny = false;
 
-        int removeIdx = -1, addIdx = -1, placeIdx = -1, returnIdx = -1, entrustIdx = -1, retrieveIdx = -1, companyRemoveIdx = -1, splitIdx = -1;
-        string? removeTxt = null, addTxt = null, placeTxt = null, returnTxt = null, entrustTxt = null, retrieveTxt = null, companyRemoveTxt = null, splitTxt = null;
+        int removeIdx = -1, addIdx = -1, placeIdx = -1, returnIdx = -1, entrustIdx = -1, retrieveIdx = -1, companyRemoveIdx = -1, splitIdx = -1, tradeIdx = -1;
+        string? removeTxt = null, addTxt = null, placeTxt = null, returnTxt = null, entrustTxt = null, retrieveTxt = null, companyRemoveTxt = null, splitTxt = null, tradeTxt = null;
 
         var max = Math.Min(agent->ContextItemCount, 64);
         for (var i = 0; i < max; i++)
@@ -3039,6 +3077,13 @@ public sealed unsafe class Plugin : IDalamudPlugin
             {
                 splitIdx = i;
                 splitTxt = text;
+                continue;
+            }
+
+            if (tradeIdx < 0 && ContextLabelMatches(AutoContextAction.Trade, text))
+            {
+                tradeIdx = i;
+                tradeTxt = text;
             }
         }
 
@@ -3048,6 +3093,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
         var saddlebagOpen = IsSaddlebagOpen();
         var retainerOpen = IsRetainerOpen();
         var companyChestOpen = IsCompanyChestOpen();
+        var tradeOpen = IsTradeOpen();
 
         // Choose the best action that exists in the menu.
         //
@@ -3070,6 +3116,11 @@ public sealed unsafe class Plugin : IDalamudPlugin
         if (mode == ModifierMode.Alt)
         {
             chosen = splitIdx >= 0 ? (splitIdx, splitTxt) : (-1, (string?)null);
+        }
+        else if (mode == ModifierMode.Shift && tradeOpen)
+        {
+            // Trade window: prioritize Trade action when Trade window is open
+            chosen = tradeIdx >= 0 ? (tradeIdx, tradeTxt) : (-1, (string?)null);
         }
         else if (mode == ModifierMode.Shift && companyChestOpen && Configuration.EnableCompanyChest)
         {
@@ -3122,11 +3173,11 @@ public sealed unsafe class Plugin : IDalamudPlugin
 
         GenerateCallback(contextMenuAddon, 0, chosen.idx, 0U, 0, 0);
 
-        // Some actions (notably Split) can be cancelled if we close the menu immediately.
+        // Some actions (notably Split and Trade) can be cancelled if we close the menu immediately.
         // Delay the close slightly to allow the follow-up UI (InputNumeric) to spawn.
-        if (chosen.txt != null && ContextLabelMatches(AutoContextAction.Split, chosen.txt))
+        if (chosen.txt != null && (ContextLabelMatches(AutoContextAction.Split, chosen.txt) || ContextLabelMatches(AutoContextAction.Trade, chosen.txt)))
         {
-            // Don't close immediately: on some setups this cancels Split before InputNumeric opens.
+            // Don't close immediately: on some setups this cancels the action before InputNumeric opens.
             // We'll keep the menu invisible (via suppression) and close it later as a cleanup.
             pendingCloseContextMenuAtMs = Environment.TickCount64 + 3000;
         }
@@ -4457,6 +4508,15 @@ public sealed unsafe class Plugin : IDalamudPlugin
                 return false;
             if (kind == PendingNumericKind.Remove && !prompt.Contains("remove", StringComparison.OrdinalIgnoreCase))
                 return false;
+            // Trade dialogs may be localized; if we're in Trade mode and Trade window is open, accept it
+            // (similar to how Split works - we trust the context rather than requiring exact prompt text)
+            if (kind == PendingNumericKind.Trade && !prompt.Contains("trade", StringComparison.OrdinalIgnoreCase))
+            {
+                // Fallback: if Trade window is open and we're expecting Trade, accept it anyway
+                // (prompt might be localized or say "How many would you like to trade?" etc.)
+                if (!IsTradeOpen())
+                    return false;
+            }
 
             if (minValue->Type != AtkValueType.UInt || maxValue->Type != AtkValueType.UInt || defaultValue->Type != AtkValueType.UInt)
                 return false;
@@ -5111,6 +5171,9 @@ public sealed unsafe class Plugin : IDalamudPlugin
     private static bool IsCompanyChestOpen()
         => IsAddonVisibleAnyIndex(FreeCompanyChestAddonName);
 
+    private static bool IsTradeOpen()
+        => IsAddonVisibleAnyIndex("Trade") || IsAddonVisibleAnyIndex("TradeWindow");
+
     private static bool IsCompanyChestType(FFXIVClientStructs.FFXIV.Client.Game.InventoryType inventoryType)
     {
         var name = Enum.GetName(typeof(FFXIVClientStructs.FFXIV.Client.Game.InventoryType), inventoryType);
@@ -5223,6 +5286,11 @@ public sealed unsafe class Plugin : IDalamudPlugin
             AutoContextAction.Sort =>
                 t.Equals("Sort", StringComparison.OrdinalIgnoreCase) ||
                 t.StartsWith("Sort", StringComparison.OrdinalIgnoreCase),
+
+            AutoContextAction.Trade =>
+                t.Equals("Trade", StringComparison.OrdinalIgnoreCase) ||
+                t.StartsWith("Trade", StringComparison.OrdinalIgnoreCase) ||
+                (Has(t, "Trade") && Has(t, "Item")),
 
             _ => false,
         };
