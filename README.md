@@ -9,6 +9,7 @@ A Dalamud plugin for Final Fantasy XIV that adds quick inventory actions via the
 ## Features
 
 - **Quick Transfer**: Hold Shift and right-click an item to automatically trigger the matching context menu action
+- **Trade Window Support**: Shift + Right Click items from inventory into Trade window with auto-fill max quantity
 - **Armoury Mode**: Hold Ctrl and right-click to prioritize armoury actions while a special container is open
 - **Split Half**: Hold Alt and right-click to split a stack and auto-fill half
 - **Cooldown Protection**: Built-in cooldown to prevent accidental double-moves
@@ -55,6 +56,8 @@ The plugin only clicks **existing** context menu options when they are available
 - **Inventory + Armoury Chest**
   - (Gear) Inventory → **Place in Armoury Chest**
   - Armoury → **Return to Inventory**
+- **Trade Window**
+  - Inventory → **Trade** (auto-fills and confirms max quantity for stackable items)
 
 If an option is not present for the clicked item, **nothing happens**.
 
@@ -183,6 +186,11 @@ This plugin is licensed under the MIT License - see the `LICENSE` file for detai
 - **Contributors**: Thanks to everyone who has contributed to this project
 
 ## Changelog
+
+### Version 1.0.4
+- **New**: Trade window support - Shift + Right Click items from inventory into Trade window
+- **New**: Auto-fill and confirm max quantity when trading stackable items
+- Trade window actions work independently of Company Chest settings
 
 ### Version 1.0.3
 - Fix: inventory **Alt+RightClick Split** now reliably auto-fills **half** (including InventoryExpansion / localized prompts)
