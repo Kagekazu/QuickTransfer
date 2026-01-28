@@ -43,6 +43,9 @@ public sealed class Configuration : IPluginConfiguration
     public bool AutoConfirmCompanyChestQuantity { get; set; } = true;
     public int CompanyChestCompartments { get; set; } = 3; // 3..5 (default game starts at 3)
 
+    public bool EnableVendorQuickSell { get; set; } = true;
+    public bool AutoConfirmVendorSell { get; set; } = true;
+
     public void Save() => Plugin.PluginInterface.SavePluginConfig(this);
 }
 
@@ -72,7 +75,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
     private (string AddonName, long EnqueuedAtMs, ModifierMode Mode)? pendingDeferredDefaultMenu;
     private (nint AgentPtr, nint AddonPtr, long EnqueuedAtMs)? pendingDeferredSortMenuClick;
     private long pendingMiddleClickSortUntilMs;
-    private (FFXIVClientStructs.FFXIV.Client.Game.InventoryType Type, int Slot, uint AddonId, long EnqueuedAtMs)? pendingMiddleClickSortRequest;
+    private (InventoryType Type, int Slot, uint AddonId, long EnqueuedAtMs)? pendingMiddleClickSortRequest;
     private long lastMiddleClickSortMs;
     private long lastReceiveEventDebugLogMs;
     private long lastFcChestTabUnmappedLogMs;
@@ -80,10 +83,10 @@ public sealed unsafe class Plugin : IDalamudPlugin
     private (nint DdiPtr, uint AddonId, long SeenAtMs)? lastHoverDdi;
     private string lastHoverAddonName = string.Empty;
     private (string AddonName, uint AddonId, long SeenAtMs)? lastHoverAddon;
-    private (FFXIVClientStructs.FFXIV.Client.Game.InventoryType Page, uint AddonId, long SeenAtMs)? lastHoverCompanyChestPage;
-    private (FFXIVClientStructs.FFXIV.Client.Game.InventoryType Page, uint AddonId, long SeenAtMs)? lastSelectedCompanyChestPage;
+    private (InventoryType Page, uint AddonId, long SeenAtMs)? lastHoverCompanyChestPage;
+    private (InventoryType Page, uint AddonId, long SeenAtMs)? lastSelectedCompanyChestPage;
     private int companyChestSelectedTabAtkValueIndex = -1;
-    private readonly Dictionary<int, Dictionary<int, FFXIVClientStructs.FFXIV.Client.Game.InventoryType>> companyChestSelectedTabCandidates = new();
+    private readonly Dictionary<int, Dictionary<int, InventoryType>> companyChestSelectedTabCandidates = new();
     private long companyChestBusyUntilMs;
     private int companyChestBusyHits;
     private long lastCompanyChestOrganizeSkipLogMs;
@@ -103,7 +106,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
 
     // Cache a known-good (type, slot, a4) that successfully produced a populated inventory context menu for a given addon.
     // This allows MMB to "Sort" even when hover payloads are weird/un-decodable, because Sort applies to the container.
-    private readonly Dictionary<uint, (FFXIVClientStructs.FFXIV.Client.Game.InventoryType Type, int Slot, int A4)> lastGoodContextTargetByAddonId = new();
+    private readonly Dictionary<uint, (InventoryType Type, int Slot, int A4)> lastGoodContextTargetByAddonId = new();
 
     // Win32: reliable mouse button state (works even when Dalamud KeyState doesn't report mouse buttons).
     [DllImport("user32.dll")]
@@ -126,51 +129,33 @@ public sealed unsafe class Plugin : IDalamudPlugin
     // Real UI heap pointers in a 64-bit process are typically well above 4GB.
     private const long MinLikelyPointer = 0x1_0000_0000; // 4GB
 
-    // ArmouryBoard drag-drop payloads are not always (InventoryType, Slot).
-    // On some builds the payload's Int1 is a category index, and Int2 is the slot within that category.
-    // This mapping is best-effort and is only applied when we're sure the hover comes from the ArmouryBoard addon.
-    private static readonly FFXIVClientStructs.FFXIV.Client.Game.InventoryType[] ArmouryBoardIndexToType =
+    // ArmouryBoardIndexToType moved to DragDropHelpers.cs
+
+    private static readonly InventoryType[] PlayerInventoryTypes =
     [
-        FFXIVClientStructs.FFXIV.Client.Game.InventoryType.ArmoryMainHand,
-        FFXIVClientStructs.FFXIV.Client.Game.InventoryType.ArmoryOffHand,
-        FFXIVClientStructs.FFXIV.Client.Game.InventoryType.ArmoryHead,
-        FFXIVClientStructs.FFXIV.Client.Game.InventoryType.ArmoryBody,
-        FFXIVClientStructs.FFXIV.Client.Game.InventoryType.ArmoryHands,
-        FFXIVClientStructs.FFXIV.Client.Game.InventoryType.ArmoryWaist,
-        FFXIVClientStructs.FFXIV.Client.Game.InventoryType.ArmoryLegs,
-        FFXIVClientStructs.FFXIV.Client.Game.InventoryType.ArmoryFeets,
-        FFXIVClientStructs.FFXIV.Client.Game.InventoryType.ArmoryEar,
-        FFXIVClientStructs.FFXIV.Client.Game.InventoryType.ArmoryNeck,
-        FFXIVClientStructs.FFXIV.Client.Game.InventoryType.ArmoryWrist,
-        FFXIVClientStructs.FFXIV.Client.Game.InventoryType.ArmoryRings,
-        FFXIVClientStructs.FFXIV.Client.Game.InventoryType.ArmorySoulCrystal,
+        InventoryType.Inventory1,
+        InventoryType.Inventory2,
+        InventoryType.Inventory3,
+        InventoryType.Inventory4,
     ];
 
-    private static readonly FFXIVClientStructs.FFXIV.Client.Game.InventoryType[] PlayerInventoryTypes =
+    private static readonly InventoryType[] SaddlebagInventoryTypes =
     [
-        FFXIVClientStructs.FFXIV.Client.Game.InventoryType.Inventory1,
-        FFXIVClientStructs.FFXIV.Client.Game.InventoryType.Inventory2,
-        FFXIVClientStructs.FFXIV.Client.Game.InventoryType.Inventory3,
-        FFXIVClientStructs.FFXIV.Client.Game.InventoryType.Inventory4,
+        InventoryType.SaddleBag1,
+        InventoryType.SaddleBag2,
+        InventoryType.PremiumSaddleBag1,
+        InventoryType.PremiumSaddleBag2,
     ];
 
-    private static readonly FFXIVClientStructs.FFXIV.Client.Game.InventoryType[] SaddlebagInventoryTypes =
+    private static readonly InventoryType[] RetainerInventoryTypes =
     [
-        FFXIVClientStructs.FFXIV.Client.Game.InventoryType.SaddleBag1,
-        FFXIVClientStructs.FFXIV.Client.Game.InventoryType.SaddleBag2,
-        FFXIVClientStructs.FFXIV.Client.Game.InventoryType.PremiumSaddleBag1,
-        FFXIVClientStructs.FFXIV.Client.Game.InventoryType.PremiumSaddleBag2,
-    ];
-
-    private static readonly FFXIVClientStructs.FFXIV.Client.Game.InventoryType[] RetainerInventoryTypes =
-    [
-        FFXIVClientStructs.FFXIV.Client.Game.InventoryType.RetainerPage1,
-        FFXIVClientStructs.FFXIV.Client.Game.InventoryType.RetainerPage2,
-        FFXIVClientStructs.FFXIV.Client.Game.InventoryType.RetainerPage3,
-        FFXIVClientStructs.FFXIV.Client.Game.InventoryType.RetainerPage4,
-        FFXIVClientStructs.FFXIV.Client.Game.InventoryType.RetainerPage5,
-        FFXIVClientStructs.FFXIV.Client.Game.InventoryType.RetainerPage6,
-        FFXIVClientStructs.FFXIV.Client.Game.InventoryType.RetainerPage7,
+        InventoryType.RetainerPage1,
+        InventoryType.RetainerPage2,
+        InventoryType.RetainerPage3,
+        InventoryType.RetainerPage4,
+        InventoryType.RetainerPage5,
+        InventoryType.RetainerPage6,
+        InventoryType.RetainerPage7,
     ];
 
     private static bool IsVkDown(int vKey)
@@ -295,7 +280,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
             // Prefer direct hit, then host, then parent.
             if (!Pick(hitId) && !Pick(hostId) && !Pick(parentId))
             {
-                static string InferOwnerNameFromInvType(FFXIVClientStructs.FFXIV.Client.Game.InventoryType t)
+                static string InferOwnerNameFromInvType(InventoryType t)
                 {
                     if (IsPlayerInventoryType(t))
                         return "Inventory";
@@ -458,6 +443,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
         }
     }
 
+    // Use DragDropHelpers
     private static bool TryGetDragDropInterfaceFromReceiveEvent(
         AddonArgs args,
         AddonReceiveEventArgs recv,
@@ -465,272 +451,34 @@ public sealed unsafe class Plugin : IDalamudPlugin
         AtkEventData* eventData,
         out uint addonId,
         out AtkDragDropInterface* ddi)
-    {
-        addonId = 0;
-        ddi = null;
-
-        var addon = (AtkUnitBase*)args.Addon.Address;
-        if (addon == null)
-            return false;
-        addonId = addon->Id;
-
-        // List item events can provide a renderer directly.
-        if (eventData != null &&
-            eventType is AtkEventType.ListItemRollOver or AtkEventType.ListItemRollOut or AtkEventType.ListItemClick or
-                AtkEventType.ListItemDoubleClick or AtkEventType.ListItemSelect)
-        {
-            try
-            {
-                var r = eventData->ListItemData.ListItemRenderer;
-                if (r != null)
-                {
-                    // Prefer the embedded DragDrop component if present.
-                    if (r->DragDropComponent != null)
-                        ddi = &r->DragDropComponent->AtkDragDropInterface;
-                    else
-                    {
-                        try { ddi = &r->AtkDragDropInterface; } catch { /* ignore */ }
-                    }
-                }
-            }
-            catch
-            {
-                // ignore
-            }
-        }
-
-        if (ddi != null)
-            return true;
-
-        static AtkDragDropInterface* TryGetDdiFromList(AtkComponentList* list)
-        {
-            if (list == null)
-                return null;
-
-            // The list tracks a hovered item index itself, which is much safer than trying to interpret eventParam.
-            // Prefer HoveredItemIndex, then fall back to other hover slots.
-            static AtkDragDropInterface* FromIndex(AtkComponentList* l, int idx)
-            {
-                if (idx < 0 || idx > 512)
-                    return null;
-                try
-                {
-                    var r = l->GetItemRenderer(idx);
-                    return r != null ? &r->AtkDragDropInterface : null;
-                }
-                catch
-                {
-                    return null;
-                }
-            }
-
-            var ddi0 = FromIndex(list, list->HoveredItemIndex);
-            if (ddi0 != null)
-                return ddi0;
-
-            var ddi1 = FromIndex(list, list->HoveredItemIndex2);
-            if (ddi1 != null)
-                return ddi1;
-
-            var ddi2 = FromIndex(list, list->HoveredItemIndex3);
-            if (ddi2 != null)
-                return ddi2;
-
-            return null;
-        }
-
-        static AtkDragDropInterface* TryGetDdiFromComponent(AtkComponentBase* component)
-        {
-            if (component == null)
-                return null;
-
-            var t = component->GetComponentType();
-            return t switch
-            {
-                ComponentType.DragDrop => &((AtkComponentDragDrop*)component)->AtkDragDropInterface,
-                ComponentType.ListItemRenderer => &((AtkComponentListItemRenderer*)component)->AtkDragDropInterface,
-                ComponentType.List => TryGetDdiFromList((AtkComponentList*)component),
-                _ => null,
-            };
-        }
-
-        // Prefer the drag-drop interface directly from event data when present.
-        // IMPORTANT: only trust DragDropData for actual drag-drop event types; for MouseOver it can contain garbage.
-        var isDragDropEvent =
-            eventType is AtkEventType.DragDropBegin or
-                AtkEventType.DragDropCanAcceptCheck or
-                AtkEventType.DragDropClick or
-                AtkEventType.DragDropDiscard or
-                AtkEventType.DragDropEnd or
-                AtkEventType.DragDropInsert or
-                AtkEventType.DragDropInsertAttempt or
-                AtkEventType.DragDropRollOut or
-                AtkEventType.DragDropRollOver;
-
-        ddi = (isDragDropEvent && eventData != null) ? eventData->DragDropData.DragDropInterface : null;
-
-        // Some drag-drop events (notably DragDropRollOver) provide a ComponentNode but not a DragDropInterface.
-        // IMPORTANT: never read DragDropData.ComponentNode for non-dragdrop events (AtkEventData is a union).
-        if (ddi == null && isDragDropEvent && eventData != null && eventData->DragDropData.ComponentNode != null)
-        {
-            try
-            {
-                var compNode = eventData->DragDropData.ComponentNode;
-                var component = compNode->Component;
-                ddi = TryGetDdiFromComponent(component);
-            }
-            catch
-            {
-                // ignore
-            }
-        }
-
-        // Fallback: some event types provide MouseData, but the target is still a DragDrop component.
-        if (ddi == null)
-        {
-            var atkEvent = (AtkEvent*)recv.AtkEvent;
-            if (atkEvent != null && atkEvent->Node != null)
-            {
-                var node = atkEvent->Node;
-                var compNode = node->GetAsAtkComponentNode();
-                if (compNode != null)
-                {
-                    var component = compNode->Component;
-                    ddi = TryGetDdiFromComponent(component);
-                }
-            }
-        }
-
-        if (ddi == null)
-            return false;
-
-        return true;
-    }
+        => DragDropHelpers.TryGetDragDropInterfaceFromReceiveEvent(args, recv, eventType, eventData, out addonId, out ddi);
 
     private static bool TryGetSlotFromDragDropInterface(
         AtkDragDropInterface* ddi,
-        out FFXIVClientStructs.FFXIV.Client.Game.InventoryType invType,
+        out InventoryType invType,
         out int slot)
-    {
-        invType = default;
-        slot = -1;
-        if (ddi == null)
-            return false;
-
-        var payload = ddi->GetPayloadContainer();
-        if (payload == null)
-            return false;
-
-        invType = (FFXIVClientStructs.FFXIV.Client.Game.InventoryType)payload->Int1;
-        slot = payload->Int2;
-        if (slot < 0 || slot > 500)
-            return false;
-
-        return true;
-    }
+        => DragDropHelpers.TryGetSlotFromDragDropInterface(ddi, out invType, out slot);
 
     private static bool TryGetSlotFromDragDropInterfaceForAddon(
         AtkDragDropInterface* ddi,
         string addonName,
         uint addonId,
-        out FFXIVClientStructs.FFXIV.Client.Game.InventoryType invType,
+        out InventoryType invType,
         out int slot,
         out int rawInt1,
         out int rawInt2,
         out uint rawFlags)
-    {
-        invType = default;
-        slot = -1;
-        rawInt1 = 0;
-        rawInt2 = 0;
-        rawFlags = 0;
+        => DragDropHelpers.TryGetSlotFromDragDropInterfaceForAddon(ddi, addonName, addonId, out invType, out slot, out rawInt1, out rawInt2, out rawFlags);
 
-        if (ddi == null)
-            return false;
-
-        AtkDragDropPayloadContainer* payload;
-        try
-        {
-            payload = ddi->GetPayloadContainer();
-        }
-        catch
-        {
-            return false;
-        }
-        if (payload == null)
-            return false;
-
-        rawInt1 = payload->Int1;
-        rawInt2 = payload->Int2;
-        rawFlags = payload->Flags;
-
-        // Default interpretation (most inventory add-ons): (InventoryType, Slot)
-        invType = (FFXIVClientStructs.FFXIV.Client.Game.InventoryType)rawInt1;
-        slot = rawInt2;
-
-        // ArmouryBoard special-case: some builds use (CategoryIndex, Slot)
-        // and Int1 may look like Inventory1..Inventory4 (0..3), which is clearly wrong for ArmouryBoard.
-        if (!string.IsNullOrEmpty(addonName) &&
-            addonName.Equals("ArmouryBoard", StringComparison.OrdinalIgnoreCase) &&
-            TryGetVisibleAddon("ArmouryBoard", out var ab) &&
-            ab != null &&
-            ab->Id == addonId)
-        {
-            if (rawInt1 >= 0 && rawInt1 < ArmouryBoardIndexToType.Length)
-            {
-                invType = ArmouryBoardIndexToType[rawInt1];
-                slot = rawInt2;
-            }
-        }
-
-        if (slot < 0 || slot > 500)
-            return false;
-
-        return true;
-    }
-
-    private static int PickContextMenuSlot(FFXIVClientStructs.FFXIV.Client.Game.InventoryType type, int preferredSlot)
-    {
-        try
-        {
-            var inv = InventoryManager.Instance();
-            if (inv == null)
-                return preferredSlot;
-
-            var c = inv->GetInventoryContainer(type);
-            if (c == null || !c->IsLoaded || c->Size <= 0)
-                return preferredSlot;
-
-            // Prefer the hovered slot when in range AND it contains an item.
-            if (preferredSlot >= 0 && preferredSlot < c->Size)
-            {
-                var it0 = c->GetInventorySlot(preferredSlot);
-                if (it0 != null && it0->ItemId != 0)
-                    return preferredSlot;
-            }
-
-            // Otherwise open on the first non-empty slot (more likely to produce an inventory context menu).
-            for (var i = 0; i < c->Size; i++)
-            {
-                var it = c->GetInventorySlot(i);
-                if (it != null && it->ItemId != 0)
-                    return i;
-            }
-
-            return 0;
-        }
-        catch
-        {
-            return preferredSlot;
-        }
-    }
+    private static int PickContextMenuSlot(InventoryType type, int preferredSlot)
+        => DragDropHelpers.PickContextMenuSlot(type, preferredSlot);
 
     private static bool TryResolveTargetFromWeirdPayload(
-        ReadOnlySpan<FFXIVClientStructs.FFXIV.Client.Game.InventoryType> containers,
+        ReadOnlySpan<InventoryType> containers,
         int rawInt1,
         int rawInt2,
         short refIdx,
-        out FFXIVClientStructs.FFXIV.Client.Game.InventoryType type,
+        out InventoryType type,
         out int slot)
     {
         type = default;
@@ -801,14 +549,14 @@ public sealed unsafe class Plugin : IDalamudPlugin
             // In that case, refuse and require hover capture.
             var visibleCount = 0;
 
-            FFXIVClientStructs.FFXIV.Client.Game.InventoryType chosenType = default;
+            InventoryType chosenType = default;
             var chosenSlot = -1;
             uint chosenAddonId = 0;
 
             // ArmouryBoard
             if (TryGetVisibleAddon("ArmouryBoard", out var ab, WideAddonSearchMaxIndex) && ab != null)
             {
-                if (TryResolveTargetFromWeirdPayload(ArmouryBoardIndexToType, -1, -1, -1, out var t, out var s))
+                if (TryResolveTargetFromWeirdPayload(DragDropHelpers.ArmouryBoardIndexToType, -1, -1, -1, out var t, out var s))
                 {
                     visibleCount++;
                     chosenType = t;
@@ -948,7 +696,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
             var addonName = h.Value.AddonName ?? string.Empty;
             var addonId = h.Value.AddonId;
 
-            ReadOnlySpan<FFXIVClientStructs.FFXIV.Client.Game.InventoryType> containers = default;
+            ReadOnlySpan<InventoryType> containers = default;
             if (addonName.Equals("Inventory", StringComparison.OrdinalIgnoreCase))
                 containers = PlayerInventoryTypes;
             else if (addonName.Equals("InventoryBuddy", StringComparison.OrdinalIgnoreCase) || addonName.Equals("InventoryBuddy2", StringComparison.OrdinalIgnoreCase))
@@ -1024,7 +772,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
                 return false;
             }
             else if (ArmouryAddonNames.Any(n => addonName.Equals(n, StringComparison.OrdinalIgnoreCase)))
-                containers = ArmouryBoardIndexToType;
+                containers = DragDropHelpers.ArmouryBoardIndexToType;
 
             if (containers.Length == 0 || addonId == 0)
                 return false;
@@ -1148,7 +896,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
     // Then we can recognize the correct InputNumeric without relying on prompt text.
     private uint pendingSplitExpectedMax;
     private long pendingSplitExpectedUntilMs;
-    private enum PendingNumericKind { None, Store, Remove, Move, Split, Trade }
+    private enum PendingNumericKind { None, Store, Remove, Move, Split, Trade, Sell }
     private PendingNumericKind pendingNumericKind;
 
     private long lastShiftSeenMs;
@@ -1168,7 +916,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
     private struct CompanyChestDepositState
     {
         public bool Active;
-        public FFXIVClientStructs.FFXIV.Client.Game.InventoryType SourceType;
+        public InventoryType SourceType;
         public uint SourceSlot;
         public uint ItemId;
         public bool IsHq;
@@ -1189,15 +937,15 @@ public sealed unsafe class Plugin : IDalamudPlugin
         public long ExpiresAtMs;
         public int Steps;
         public int Phase; // 0=stack, 1=compact
-        public FFXIVClientStructs.FFXIV.Client.Game.InventoryType[] Pages;
+        public InventoryType[] Pages;
 
         // Throttle: wait for the last move to apply before issuing another.
         public bool WaitingForApply;
-        public FFXIVClientStructs.FFXIV.Client.Game.InventoryType WaitSrcType;
+        public InventoryType WaitSrcType;
         public uint WaitSrcSlot;
         public uint WaitSrcItemId;
         public int WaitSrcQty;
-        public FFXIVClientStructs.FFXIV.Client.Game.InventoryType WaitDstType;
+        public InventoryType WaitDstType;
         public uint WaitDstSlot;
         public uint WaitDstItemId;
         public int WaitDstQty;
@@ -1208,7 +956,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
 
     private static bool TryGetSlotSnapshot(
         InventoryManager* inv,
-        FFXIVClientStructs.FFXIV.Client.Game.InventoryType type,
+        InventoryType type,
         uint slot,
         out uint itemId,
         out int qty)
@@ -1232,7 +980,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
         }
     }
 
-    private static bool IsContainerLoaded(InventoryManager* inv, FFXIVClientStructs.FFXIV.Client.Game.InventoryType type)
+    private static bool IsContainerLoaded(InventoryManager* inv, InventoryType type)
     {
         try
         {
@@ -1256,38 +1004,31 @@ public sealed unsafe class Plugin : IDalamudPlugin
         Alt,
     }
 
-    private delegate void OpenForItemSlotDelegate(
-        AgentInventoryContext* agent,
-        FFXIVClientStructs.FFXIV.Client.Game.InventoryType inventoryType,
-        int slot,
-        int a4,
-        uint addonId);
-
     // Inventory/armoury uses this; saddlebags often do not, so we also use IContextMenu fallback.
-    [Signature("83 B9 ?? ?? ?? ?? ?? 7E ?? 39 91", DetourName = nameof(OpenForItemSlotDetour))]
-    private Hook<OpenForItemSlotDelegate>? openForItemSlotHook = null;
+    // Use ClientStructs delegate for better compatibility (per Discord feedback).
+    private Hook<AgentInventoryContext.Delegates.OpenForItemSlot>? openForItemSlotHook = null;
 
-    private delegate byte AtkUnitBaseCloseDelegate(AtkUnitBase* unitBase, byte a2);
-
-    [Signature("40 53 48 83 EC 50 81 A1", Fallibility = Fallibility.Fallible)]
-    private AtkUnitBaseCloseDelegate? atkUnitBaseClose = null;
+    // AtkUnitBase.Close: Use IAddonLifecycle service instead of manual signature (recommended by Dalamud team).
+    // We use Hide() calls directly where needed, and IAddonLifecycle for addon lifecycle events.
 
     // NOTE: For inventory transfers (including Free Company Chest), use the client callback handler:
     // RaptureAtkModule::HandleItemMove(AtkValue* returnValue, AtkValue* values, uint valueCount)
     // This is exposed directly by FFXIVClientStructs as a member function, so we do not signature-scan it ourselves.
 
+    // Use ContextMenuHandler.AutoContextAction
     private enum AutoContextAction
     {
-        AddAllToSaddlebag,
-        RemoveAllFromSaddlebag,
-        PlaceInArmouryChest,
-        ReturnToInventory,
-        EntrustToRetainer,
-        RetrieveFromRetainer,
-        RemoveFromCompanyChest,
-        Split,
-        Sort,
-        Trade,
+        AddAllToSaddlebag = ContextMenuHandler.AutoContextAction.AddAllToSaddlebag,
+        RemoveAllFromSaddlebag = ContextMenuHandler.AutoContextAction.RemoveAllFromSaddlebag,
+        PlaceInArmouryChest = ContextMenuHandler.AutoContextAction.PlaceInArmouryChest,
+        ReturnToInventory = ContextMenuHandler.AutoContextAction.ReturnToInventory,
+        EntrustToRetainer = ContextMenuHandler.AutoContextAction.EntrustToRetainer,
+        RetrieveFromRetainer = ContextMenuHandler.AutoContextAction.RetrieveFromRetainer,
+        RemoveFromCompanyChest = ContextMenuHandler.AutoContextAction.RemoveFromCompanyChest,
+        Split = ContextMenuHandler.AutoContextAction.Split,
+        Sort = ContextMenuHandler.AutoContextAction.Sort,
+        Trade = ContextMenuHandler.AutoContextAction.Trade,
+        Sell = ContextMenuHandler.AutoContextAction.Sell,
     }
 
     private static readonly string[] ArmouryAddonNames =
@@ -1325,6 +1066,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
     private const string FreeCompanyChestAddonName = "FreeCompanyChest";
     private const string InputNumericAddonName = "InputNumeric";
     private const string ContextMenuAddonName = "ContextMenu";
+    private const string SelectYesnoAddonName = "SelectYesno";
 
     // IMPORTANT:
     // We suppress by forcing alpha to 0 in PreDraw, which can "stick" because the same addon instance is reused.
@@ -1338,20 +1080,20 @@ public sealed unsafe class Plugin : IDalamudPlugin
     private void ArmSuppressInputNumeric(long now, int durationMs = 1500)
         => suppressInputNumericUntilMs = Math.Max(suppressInputNumericUntilMs, now + durationMs);
 
-    private FFXIVClientStructs.FFXIV.Client.Game.InventoryType[] GetCompanyChestInventoryTypes()
+    private InventoryType[] GetCompanyChestInventoryTypes()
     {
         // Don't hardcode enum names; discover them by name at runtime so we don't break across patches/structs.
         // Limit to the configured number of item compartments (default 3; can be upgraded to 5).
         var max = Math.Clamp(Configuration.CompanyChestCompartments, 3, 5);
-        return Enum.GetValues<FFXIVClientStructs.FFXIV.Client.Game.InventoryType>()
+        return Enum.GetValues<InventoryType>()
             .Where(IsCompanyChestType)
             .OrderBy(v => (int)v)
             .Take(max)
             .ToArray();
     }
 
-    private static FFXIVClientStructs.FFXIV.Client.Game.InventoryType[] GetAllCompanyChestItemPages()
-        => Enum.GetValues<FFXIVClientStructs.FFXIV.Client.Game.InventoryType>()
+    private static InventoryType[] GetAllCompanyChestItemPages()
+        => Enum.GetValues<InventoryType>()
             .Where(IsCompanyChestType)
             .OrderBy(v => (int)v)
             .Take(5)
@@ -1396,7 +1138,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
         }
     }
 
-    private bool TryResolveCompanyChestPageFromAddon(AtkUnitBase* addon, out FFXIVClientStructs.FFXIV.Client.Game.InventoryType page)
+    private bool TryResolveCompanyChestPageFromAddon(AtkUnitBase* addon, out InventoryType page)
     {
         page = default;
         try
@@ -1410,13 +1152,13 @@ public sealed unsafe class Plugin : IDalamudPlugin
                 return false;
 
             var maxNodes = Math.Min((int)nodeCount, 2000);
-            var bestPage = default(FFXIVClientStructs.FFXIV.Client.Game.InventoryType);
+            var bestPage = default(InventoryType);
             var bestHits = 0;
 
             // Track the most frequently observed FreeCompanyPageX among *visible* nodes.
             // Rationale: the FC chest addon often keeps nodes for other tabs alive but hidden; a "first match wins"
             // scan can return the wrong tab (observed off-by-one behavior).
-            var hitsByPage = new Dictionary<FFXIVClientStructs.FFXIV.Client.Game.InventoryType, int>(8);
+            var hitsByPage = new Dictionary<InventoryType, int>(8);
             for (var i = 0; i < maxNodes; i++)
             {
                 var n = addon->UldManager.NodeList[i];
@@ -1537,7 +1279,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
         return false;
     }
 
-    private void ObserveCompanyChestTabFromAtkValues(AtkUnitBase* addon, FFXIVClientStructs.FFXIV.Client.Game.InventoryType selectedPage)
+    private void ObserveCompanyChestTabFromAtkValues(AtkUnitBase* addon, InventoryType selectedPage)
     {
         try
         {
@@ -1559,7 +1301,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
 
                 if (!companyChestSelectedTabCandidates.TryGetValue(i, out var map))
                 {
-                    map = new Dictionary<int, FFXIVClientStructs.FFXIV.Client.Game.InventoryType>(8);
+                    map = new Dictionary<int, InventoryType>(8);
                     companyChestSelectedTabCandidates[i] = map;
                 }
 
@@ -1602,7 +1344,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
         }
     }
 
-    private bool TryResolveCompanyChestSelectedPageFromAtkValues(uint addonId, out FFXIVClientStructs.FFXIV.Client.Game.InventoryType page)
+    private bool TryResolveCompanyChestSelectedPageFromAtkValues(uint addonId, out InventoryType page)
     {
         page = default;
         try
@@ -1678,7 +1420,41 @@ public sealed unsafe class Plugin : IDalamudPlugin
         PluginInterface.UiBuilder.OpenConfigUi += OpenConfigUi;
 
         InteropProvider.InitializeFromAttributes(this);
-        openForItemSlotHook?.Enable();
+        
+        // Hook using ClientStructs delegate (per Discord feedback for better compatibility)
+        try
+        {
+            // AgentInventoryContext.Delegates.OpenForItemSlot is the delegate type
+            // We need to get the function pointer from MemberFunctionPointers to hook it
+            var funcPtr = AgentInventoryContext.MemberFunctionPointers.OpenForItemSlot;
+            if (funcPtr != null)
+            {
+                openForItemSlotHook = InteropProvider.HookFromAddress<AgentInventoryContext.Delegates.OpenForItemSlot>(
+                    (nint)funcPtr,
+                    OpenForItemSlotDetour);
+                openForItemSlotHook?.Enable();
+            }
+            else
+            {
+                Log.Warning("[QuickTransfer] AgentInventoryContext.MemberFunctionPointers.OpenForItemSlot is null - signature may not be resolved");
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "[QuickTransfer] Failed to hook OpenForItemSlot using ClientStructs delegate - falling back to manual signature");
+            // Fallback: try manual signature hook
+            try
+            {
+                openForItemSlotHook = InteropProvider.HookFromSignature<AgentInventoryContext.Delegates.OpenForItemSlot>(
+                    "83 B9 ?? ?? ?? ?? ?? 7E ?? 39 91",
+                    OpenForItemSlotDetour);
+                openForItemSlotHook?.Enable();
+            }
+            catch (Exception ex2)
+            {
+                Log.Error(ex2, "[QuickTransfer] Failed to hook OpenForItemSlot with fallback signature");
+            }
+        }
 
         // Saddlebags can bypass OpenForItemSlot, so use a safe deferred click via context menu events.
         ContextMenu.OnMenuOpened += OnContextMenuOpened;
@@ -1706,7 +1482,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
         {
             try
             {
-                var matches = Enum.GetNames<FFXIVClientStructs.FFXIV.Client.Game.InventoryType>()
+                var matches = Enum.GetNames<InventoryType>()
                     .Where(n => n.Contains("FreeCompany", StringComparison.OrdinalIgnoreCase) ||
                                 n.Contains("Company", StringComparison.OrdinalIgnoreCase) ||
                                 n.Contains("Chest", StringComparison.OrdinalIgnoreCase))
@@ -1812,7 +1588,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
 
     private void OpenForItemSlotDetour(
         AgentInventoryContext* agent,
-        FFXIVClientStructs.FFXIV.Client.Game.InventoryType inventoryType,
+        InventoryType inventoryType,
         int slot,
         int a4,
         uint addonId)
@@ -1911,6 +1687,23 @@ public sealed unsafe class Plugin : IDalamudPlugin
                 pendingCompanyChestNumericConfirmAttempts = 0;
                 pendingCompanyChestNumericArmed = true;
                 pendingNumericKind = PendingNumericKind.Trade;
+                pendingCompanyChestNumericValueSet = false;
+                pendingCompanyChestNumericValueSetAtMs = 0;
+                pendingCompanyChestNumericDesired = 0;
+                pendingCompanyChestNumericHalf = false;
+                ArmSuppressInputNumeric(now, 1500);
+            }
+            // Set up vendor Sell quantity auto-confirm if Sell was selected
+            if (Configuration.AutoConfirmVendorSell &&
+                mode == ModifierMode.Shift &&
+                chosenText.Length > 0 &&
+                ContextLabelMatches(AutoContextAction.Sell, chosenText) &&
+                IsVendorOpen())
+            {
+                pendingCompanyChestNumericConfirmUntilMs = now + 1500;
+                pendingCompanyChestNumericConfirmAttempts = 0;
+                pendingCompanyChestNumericArmed = true;
+                pendingNumericKind = PendingNumericKind.Sell;
                 pendingCompanyChestNumericValueSet = false;
                 pendingCompanyChestNumericValueSetAtMs = 0;
                 pendingCompanyChestNumericDesired = 0;
@@ -2032,9 +1825,10 @@ public sealed unsafe class Plugin : IDalamudPlugin
             lastAltSeenMs = now;
 
         // Quantity prompt auto-confirm (best effort).
-        // Trade and Split always auto-confirm; Company Chest respects the config setting.
+        // Trade and Split always auto-confirm; Company Chest and Vendor Sell respect their config settings.
         var shouldAutoConfirm = pendingNumericKind == PendingNumericKind.Trade ||
                                 pendingNumericKind == PendingNumericKind.Split ||
+                                (Configuration.AutoConfirmVendorSell && pendingNumericKind == PendingNumericKind.Sell) ||
                                 (Configuration.AutoConfirmCompanyChestQuantity && pendingNumericKind != PendingNumericKind.None);
         
         if (shouldAutoConfirm &&
@@ -2190,6 +1984,29 @@ public sealed unsafe class Plugin : IDalamudPlugin
                     suppressInputNumericUntilMs = 0;
                     Log.Warning(ex, "[QuickTransfer] Failed to auto-confirm InputNumeric.");
                 }
+            }
+            else if (Configuration.AutoConfirmVendorSell && pendingNumericKind == PendingNumericKind.Sell && IsVendorOpen() &&
+                     TryGetVisibleAddon(SelectYesnoAddonName, out var selectYesno) && selectYesno != null)
+            {
+                // "Are you certain you wish to sell it?" (unique/untradable) — click OK/Yes.
+                try
+                {
+                    selectYesno->FireCallbackInt(0); // 0 = OK/Yes
+                    if (Configuration.DebugMode)
+                        Log.Information("[QuickTransfer] Auto-confirmed vendor sell Yes/No dialog (SelectYesno).");
+                }
+                catch (Exception ex)
+                {
+                    if (Configuration.DebugMode)
+                        Log.Warning(ex, "[QuickTransfer] Failed to auto-confirm SelectYesno.");
+                }
+                pendingCompanyChestNumericConfirmUntilMs = 0;
+                pendingCompanyChestNumericArmed = false;
+                pendingNumericKind = PendingNumericKind.None;
+                pendingCompanyChestNumericValueSet = false;
+                pendingCompanyChestNumericValueSetAtMs = 0;
+                pendingCompanyChestNumericDesired = 0;
+                pendingCompanyChestNumericHalf = false;
             }
         }
         else if (pendingCompanyChestNumericConfirmUntilMs > 0 && now > pendingCompanyChestNumericConfirmUntilMs)
@@ -2351,7 +2168,6 @@ public sealed unsafe class Plugin : IDalamudPlugin
                 if (cm != null)
                 {
                     try { cm->Hide(false, true, 0); } catch { /* ignore */ }
-                    try { atkUnitBaseClose?.Invoke(cm, 0); } catch { /* ignore */ }
                 }
             }
             catch
@@ -2460,6 +2276,23 @@ public sealed unsafe class Plugin : IDalamudPlugin
                     pendingCompanyChestNumericHalf = false;
                     ArmSuppressInputNumeric(now, 1500);
                 }
+                if (Configuration.AutoConfirmVendorSell &&
+                    pending.Value.Mode == ModifierMode.Shift &&
+                    chosenText.Length > 0 &&
+                    ContextLabelMatches(AutoContextAction.Sell, chosenText) &&
+                    IsVendorOpen())
+                {
+                    // Vendor Sell: auto-confirm max quantity when InputNumeric appears
+                    pendingCompanyChestNumericConfirmUntilMs = now + 1500;
+                    pendingCompanyChestNumericConfirmAttempts = 0;
+                    pendingCompanyChestNumericArmed = true;
+                    pendingNumericKind = PendingNumericKind.Sell;
+                    pendingCompanyChestNumericValueSet = false;
+                    pendingCompanyChestNumericValueSetAtMs = 0;
+                    pendingCompanyChestNumericDesired = 0;
+                    pendingCompanyChestNumericHalf = false;
+                    ArmSuppressInputNumeric(now, 1500);
+                }
                 if (Configuration.EnableCompanyChest &&
                     pending.Value.Mode == ModifierMode.Shift &&
                     chosenText.Length > 0 &&
@@ -2493,7 +2326,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
                     // Record expected split max (qty-1) to recognize the right dialog even if the prompt isn't English.
                     try
                     {
-                        var srcType = (FFXIVClientStructs.FFXIV.Client.Game.InventoryType)agent->TargetInventoryId;
+                        var srcType = (InventoryType)agent->TargetInventoryId;
                         var srcSlot = (int)agent->TargetInventorySlotId;
                         if (TryGetItemInfo(srcType, srcSlot, out _, out _, out var qty) && qty > 1)
                         {
@@ -2870,31 +2703,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
         }
     }
 
-    private static void MakeAddonInvisible(AtkUnitBase* addon)
-    {
-        if (addon == null)
-            return;
-        var root = addon->RootNode;
-        if (root == null)
-            return;
-
-        // Keep it logically visible/interactive, but force it fully transparent before it draws.
-        root->Color.A = 0;
-        root->Alpha_2 = 0;
-    }
-
-    private static void MakeAddonVisible(AtkUnitBase* addon)
-    {
-        if (addon == null)
-            return;
-        var root = addon->RootNode;
-        if (root == null)
-            return;
-
-        // Restore fully visible alpha; this prevents "stuck invisible" menus after a suppression frame.
-        root->Color.A = 255;
-        root->Alpha_2 = 255;
-    }
+    // Use AtkValueHelpers (implementation moved to AtkValueHelpers.cs)
 
     private void OnInputNumericPreSetup(AddonEvent type, AddonArgs args)
     {
@@ -2924,13 +2733,15 @@ public sealed unsafe class Plugin : IDalamudPlugin
             if (Configuration.DebugMode)
                 Log.Information($"[QuickTransfer] InputNumeric PreSetup (armed): AtkValueCount={count}");
 
-            // Guard against cross-confirmation: only touch the prompt we intended (store/remove).
+            // Guard against cross-confirmation: only touch the prompt we intended (store/remove/sell).
             if (pendingNumericKind != PendingNumericKind.None)
             {
                 var prompt = values[6].Type is AtkValueType.String or AtkValueType.ManagedString ? ReadAtkValueString(values[6]) : string.Empty;
                 if (pendingNumericKind == PendingNumericKind.Store && !prompt.Contains("store", StringComparison.OrdinalIgnoreCase))
                     return;
                 if (pendingNumericKind == PendingNumericKind.Remove && !prompt.Contains("remove", StringComparison.OrdinalIgnoreCase))
+                    return;
+                if (pendingNumericKind == PendingNumericKind.Sell && !prompt.Contains("sell", StringComparison.OrdinalIgnoreCase))
                     return;
                 // For "Move" we accept any prompt while the Company Chest is open (used for internal stack/organize moves).
             }
@@ -2977,6 +2788,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
         }
     }
 
+    // Use ContextMenuHandler
     private bool TryAutoSelectAndClose(AgentInventoryContext* agent, ModifierMode mode, out string chosenText, out int chosenIndex)
     {
         chosenText = string.Empty;
@@ -3001,246 +2813,21 @@ public sealed unsafe class Plugin : IDalamudPlugin
 
     private bool TryAutoSelectAndClose(AgentInventoryContext* agent, AtkUnitBase* contextMenuAddon, ModifierMode mode, out string chosenText, out int chosenIndex)
     {
-        chosenText = string.Empty;
-        chosenIndex = -1;
-
-        // Single-pass: decode each label once, record first match per action.
-        var foundAny = false;
-
-        int removeIdx = -1, addIdx = -1, placeIdx = -1, returnIdx = -1, entrustIdx = -1, retrieveIdx = -1, companyRemoveIdx = -1, splitIdx = -1, tradeIdx = -1;
-        string? removeTxt = null, addTxt = null, placeTxt = null, returnTxt = null, entrustTxt = null, retrieveTxt = null, companyRemoveTxt = null, splitTxt = null, tradeTxt = null;
-
-        var max = Math.Min(agent->ContextItemCount, 64);
-        for (var i = 0; i < max; i++)
-        {
-            var param = agent->EventParams[agent->ContexItemStartIndex + i];
-            if (param.Type is not (AtkValueType.String or AtkValueType.ManagedString))
-                continue;
-
-            var text = ReadAtkValueString(param);
-            if (string.IsNullOrWhiteSpace(text))
-                continue;
-
-            foundAny = true;
-
-            // Priority matters: we want the first matching index for each action.
-            if (removeIdx < 0 && ContextLabelMatches(AutoContextAction.RemoveAllFromSaddlebag, text))
-            {
-                removeIdx = i;
-                removeTxt = text;
-                continue;
-            }
-
-            if (companyRemoveIdx < 0 && ContextLabelMatches(AutoContextAction.RemoveFromCompanyChest, text))
-            {
-                companyRemoveIdx = i;
-                companyRemoveTxt = text;
-                continue;
-            }
-
-            if (addIdx < 0 && ContextLabelMatches(AutoContextAction.AddAllToSaddlebag, text))
-            {
-                addIdx = i;
-                addTxt = text;
-                continue;
-            }
-
-            if (placeIdx < 0 && ContextLabelMatches(AutoContextAction.PlaceInArmouryChest, text))
-            {
-                placeIdx = i;
-                placeTxt = text;
-                continue;
-            }
-
-            if (returnIdx < 0 && ContextLabelMatches(AutoContextAction.ReturnToInventory, text))
-            {
-                returnIdx = i;
-                returnTxt = text;
-                continue;
-            }
-
-            if (entrustIdx < 0 && ContextLabelMatches(AutoContextAction.EntrustToRetainer, text))
-            {
-                entrustIdx = i;
-                entrustTxt = text;
-                continue;
-            }
-
-            if (retrieveIdx < 0 && ContextLabelMatches(AutoContextAction.RetrieveFromRetainer, text))
-            {
-                retrieveIdx = i;
-                retrieveTxt = text;
-                continue;
-            }
-
-            if (splitIdx < 0 && ContextLabelMatches(AutoContextAction.Split, text))
-            {
-                splitIdx = i;
-                splitTxt = text;
-                continue;
-            }
-
-            if (tradeIdx < 0 && ContextLabelMatches(AutoContextAction.Trade, text))
-            {
-                tradeIdx = i;
-                tradeTxt = text;
-            }
-        }
-
-        if (!foundAny)
-            return false;
-
-        var saddlebagOpen = IsSaddlebagOpen();
-        var retainerOpen = IsRetainerOpen();
-        var companyChestOpen = IsCompanyChestOpen();
-        var tradeOpen = IsTradeOpen();
-
-        // Choose the best action that exists in the menu.
-        //
-        // When Company Chest is open:
-        // - Shift mode: remove from chest (withdraw)
-        // - Ctrl mode: armoury actions (Inventory <-> Armoury) are allowed (like other "special" containers)
-        //
-        // When Retainer is open:
-        // - Shift mode: retainer actions (Entrust/Retrieve), and if Saddlebags are also open, retainer<->saddlebag.
-        //
-        // When Saddlebags are open (no retainer):
-        // - Shift mode: saddlebag actions (Add/Remove)
-        //
-        // Ctrl mode (only enabled when Retainer OR Saddlebags are open):
-        // - Armoury actions (Inventory <-> Armoury): Return/Place
-        //
-        // No Retainer/Saddlebags:
-        // - Shift mode: allow armoury transfers (Place/Return).
-        (int idx, string? txt) chosen;
-        if (mode == ModifierMode.Alt)
-        {
-            chosen = splitIdx >= 0 ? (splitIdx, splitTxt) : (-1, (string?)null);
-        }
-        else if (mode == ModifierMode.Shift && tradeOpen)
-        {
-            // Trade window: prioritize Trade action when Trade window is open
-            chosen = tradeIdx >= 0 ? (tradeIdx, tradeTxt) : (-1, (string?)null);
-        }
-        else if (mode == ModifierMode.Shift && companyChestOpen && Configuration.EnableCompanyChest)
-        {
-            chosen = companyRemoveIdx >= 0 ? (companyRemoveIdx, companyRemoveTxt) : (-1, (string?)null);
-        }
-        else if (mode == ModifierMode.Ctrl)
-        {
-            chosen = returnIdx >= 0 ? (returnIdx, returnTxt) :
-                placeIdx >= 0 ? (placeIdx, placeTxt) :
-                (-1, (string?)null);
-        }
-        else if (retainerOpen)
-        {
-            if (saddlebagOpen)
-            {
-                // Retainer <-> Saddlebag:
-                // - Retainer item: Add All to Saddlebag
-                // - Saddlebag item: Entrust to Retainer
-                chosen = addIdx >= 0 ? (addIdx, addTxt) :
-                    entrustIdx >= 0 ? (entrustIdx, entrustTxt) :
-                    // last-resort fallback
-                    removeIdx >= 0 ? (removeIdx, removeTxt) :
-                    (-1, (string?)null);
-            }
-            else
-            {
-                // Retainer <-> Player (Inventory/Armoury):
-                // - Retainer item: Retrieve from Retainer
-                // - Player item: Entrust to Retainer
-                chosen = retrieveIdx >= 0 ? (retrieveIdx, retrieveTxt) :
-                    entrustIdx >= 0 ? (entrustIdx, entrustTxt) :
-                    (-1, (string?)null);
-            }
-        }
-        else if (saddlebagOpen)
-        {
-            chosen = removeIdx >= 0 ? (removeIdx, removeTxt) :
-                addIdx >= 0 ? (addIdx, addTxt) :
-                (-1, (string?)null);
-        }
-        else
-        {
-            chosen = placeIdx >= 0 ? (placeIdx, placeTxt) :
-                returnIdx >= 0 ? (returnIdx, returnTxt) :
-                (-1, (string?)null);
-        }
-
-        if (chosen.idx < 0 || string.IsNullOrWhiteSpace(chosen.txt))
-            return false;
-
-        GenerateCallback(contextMenuAddon, 0, chosen.idx, 0U, 0, 0);
-
-        // Some actions (notably Split and Trade) can be cancelled if we close the menu immediately.
-        // Delay the close slightly to allow the follow-up UI (InputNumeric) to spawn.
-        if (chosen.txt != null && (ContextLabelMatches(AutoContextAction.Split, chosen.txt) || ContextLabelMatches(AutoContextAction.Trade, chosen.txt)))
-        {
-            // Don't close immediately: on some setups this cancels the action before InputNumeric opens.
-            // We'll keep the menu invisible (via suppression) and close it later as a cleanup.
-            pendingCloseContextMenuAtMs = Environment.TickCount64 + 3000;
-        }
-        else
-        {
-            CloseContextMenuAddon(agent, contextMenuAddon);
-        }
-
-        chosenText = chosen.txt!;
-        chosenIndex = chosen.idx;
-        return true;
+        return ContextMenuHandler.TryAutoSelectAndClose(
+            agent,
+            contextMenuAddon,
+            (ContextMenuHandler.ModifierMode)mode,
+            Configuration,
+            out chosenText,
+            out chosenIndex,
+            ref pendingCloseContextMenuAtMs);
     }
 
+    // Use ContextMenuHandler
     private bool TrySelectSortAndClose(AgentInventoryContext* agent, AtkUnitBase* contextMenuAddon, out string chosenText, out int chosenIndex)
-    {
-        chosenText = string.Empty;
-        chosenIndex = -1;
+        => ContextMenuHandler.TrySelectSortAndClose(agent, contextMenuAddon, out chosenText, out chosenIndex);
 
-        var undoSortIdx = -1;
-        string? undoSortText = null;
-
-        var max = Math.Min(agent->ContextItemCount, 64);
-        for (var i = 0; i < max; i++)
-        {
-            var param = agent->EventParams[agent->ContexItemStartIndex + i];
-            if (param.Type is not (AtkValueType.String or AtkValueType.ManagedString))
-                continue;
-
-            var text = ReadAtkValueString(param);
-            if (string.IsNullOrWhiteSpace(text))
-                continue;
-
-            // If Sort isn't present (because the container is already sorted), the menu often contains "Undo Sort" instead.
-            // We treat that as "already sorted" and do nothing (closing the menu).
-            if (undoSortIdx < 0 && text.Trim().Equals("Undo Sort", StringComparison.OrdinalIgnoreCase))
-            {
-                undoSortIdx = i;
-                undoSortText = text;
-            }
-
-            if (!ContextLabelMatches(AutoContextAction.Sort, text))
-                continue;
-
-            GenerateCallback(contextMenuAddon, 0, i, 0U, 0, 0);
-            CloseContextMenuAddon(agent, contextMenuAddon);
-            chosenText = text;
-            chosenIndex = i;
-            return true;
-        }
-
-        // No "Sort" entry. If "Undo Sort" exists, we're already sorted; close the menu without changing state.
-        if (undoSortIdx >= 0)
-        {
-            try { CloseContextMenuAddon(agent, contextMenuAddon); } catch { /* ignore */ }
-            chosenText = "Already sorted";
-            chosenIndex = -1;
-            return true;
-        }
-
-        return false;
-    }
-
-    private bool StartCompanyChestDeposit(FFXIVClientStructs.FFXIV.Client.Game.InventoryType sourceType, uint sourceSlot)
+    private bool StartCompanyChestDeposit(InventoryType sourceType, uint sourceSlot)
     {
         try
         {
@@ -3435,7 +3022,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
             Log.Information($"[QuickTransfer] (MMB) Company Chest organize started (pages=[{string.Join(", ", pages)}]).");
     }
 
-    private void StartCompanyChestOrganize(long now, FFXIVClientStructs.FFXIV.Client.Game.InventoryType selectedPage)
+    private void StartCompanyChestOrganize(long now, InventoryType selectedPage)
     {
         if (!IsCompanyChestType(selectedPage))
         {
@@ -3557,7 +3144,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
         // If the selected page isn't loaded yet (loading spinner), wait.
         try
         {
-            var pages0 = companyChestOrganize.Pages ?? Array.Empty<FFXIVClientStructs.FFXIV.Client.Game.InventoryType>();
+            var pages0 = companyChestOrganize.Pages ?? Array.Empty<InventoryType>();
             var inv0 = InventoryManager.Instance();
             if (inv0 != null && pages0.Length > 0)
             {
@@ -3699,7 +3286,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
             return;
         }
 
-        var pages = companyChestOrganize.Pages ?? Array.Empty<FFXIVClientStructs.FFXIV.Client.Game.InventoryType>();
+        var pages = companyChestOrganize.Pages ?? Array.Empty<InventoryType>();
         if (pages.Length == 0)
         {
             companyChestOrganize.Active = false;
@@ -3887,10 +3474,10 @@ public sealed unsafe class Plugin : IDalamudPlugin
     }
 
     private bool TryFindCompanyChestMergeMove(
-        FFXIVClientStructs.FFXIV.Client.Game.InventoryType[] pages,
-        out FFXIVClientStructs.FFXIV.Client.Game.InventoryType srcType,
+        InventoryType[] pages,
+        out InventoryType srcType,
         out uint srcSlot,
-        out FFXIVClientStructs.FFXIV.Client.Game.InventoryType dstType,
+        out InventoryType dstType,
         out uint dstSlot,
         out bool needsNumeric)
     {
@@ -3980,10 +3567,10 @@ public sealed unsafe class Plugin : IDalamudPlugin
     }
 
     private static bool TryFindCompanyChestCompactionMove(
-        FFXIVClientStructs.FFXIV.Client.Game.InventoryType[] pages,
-        out FFXIVClientStructs.FFXIV.Client.Game.InventoryType srcType,
+        InventoryType[] pages,
+        out InventoryType srcType,
         out uint srcSlot,
-        out FFXIVClientStructs.FFXIV.Client.Game.InventoryType dstType,
+        out InventoryType dstType,
         out uint dstSlot)
     {
         srcType = default;
@@ -4060,10 +3647,10 @@ public sealed unsafe class Plugin : IDalamudPlugin
     }
 
     private static bool TryFindCompanyChestSortMove(
-        FFXIVClientStructs.FFXIV.Client.Game.InventoryType[] pages,
-        out FFXIVClientStructs.FFXIV.Client.Game.InventoryType srcType,
+        InventoryType[] pages,
+        out InventoryType srcType,
         out uint srcSlot,
-        out FFXIVClientStructs.FFXIV.Client.Game.InventoryType dstType,
+        out InventoryType dstType,
         out uint dstSlot)
     {
         srcType = default;
@@ -4155,9 +3742,9 @@ public sealed unsafe class Plugin : IDalamudPlugin
     }
 
     private bool TryCompanyChestMoveItem(
-        FFXIVClientStructs.FFXIV.Client.Game.InventoryType sourceType,
+        InventoryType sourceType,
         uint sourceSlot,
-        FFXIVClientStructs.FFXIV.Client.Game.InventoryType destType,
+        InventoryType destType,
         uint destSlot,
         bool keepAliveForInputNumeric)
     {
@@ -4242,12 +3829,12 @@ public sealed unsafe class Plugin : IDalamudPlugin
         }
     }
 
-    private static FFXIVClientStructs.FFXIV.Client.Game.InventoryType[] GetSplitCandidateTypes(FFXIVClientStructs.FFXIV.Client.Game.InventoryType sourceType)
+    private static InventoryType[] GetSplitCandidateTypes(InventoryType sourceType)
     {
         // Prefer the same container first, then fall back to other pages of the same "kind".
         // This mirrors the game's "Split" behavior which places the new stack into an empty slot in the same inventory group.
-        var tmp = new List<FFXIVClientStructs.FFXIV.Client.Game.InventoryType>(capacity: 8);
-        void Add(FFXIVClientStructs.FFXIV.Client.Game.InventoryType t)
+        var tmp = new List<InventoryType>(capacity: 8);
+        void Add(InventoryType t)
         {
             for (var i = 0; i < tmp.Count; i++)
                 if (tmp[i] == t)
@@ -4258,27 +3845,27 @@ public sealed unsafe class Plugin : IDalamudPlugin
         Add(sourceType);
         if (IsPlayerInventoryType(sourceType))
         {
-            Add(FFXIVClientStructs.FFXIV.Client.Game.InventoryType.Inventory1);
-            Add(FFXIVClientStructs.FFXIV.Client.Game.InventoryType.Inventory2);
-            Add(FFXIVClientStructs.FFXIV.Client.Game.InventoryType.Inventory3);
-            Add(FFXIVClientStructs.FFXIV.Client.Game.InventoryType.Inventory4);
+            Add(InventoryType.Inventory1);
+            Add(InventoryType.Inventory2);
+            Add(InventoryType.Inventory3);
+            Add(InventoryType.Inventory4);
         }
         else if (IsSaddlebagType(sourceType))
         {
-            Add(FFXIVClientStructs.FFXIV.Client.Game.InventoryType.SaddleBag1);
-            Add(FFXIVClientStructs.FFXIV.Client.Game.InventoryType.SaddleBag2);
-            Add(FFXIVClientStructs.FFXIV.Client.Game.InventoryType.PremiumSaddleBag1);
-            Add(FFXIVClientStructs.FFXIV.Client.Game.InventoryType.PremiumSaddleBag2);
+            Add(InventoryType.SaddleBag1);
+            Add(InventoryType.SaddleBag2);
+            Add(InventoryType.PremiumSaddleBag1);
+            Add(InventoryType.PremiumSaddleBag2);
         }
         else if (IsRetainerType(sourceType))
         {
-            Add(FFXIVClientStructs.FFXIV.Client.Game.InventoryType.RetainerPage1);
-            Add(FFXIVClientStructs.FFXIV.Client.Game.InventoryType.RetainerPage2);
-            Add(FFXIVClientStructs.FFXIV.Client.Game.InventoryType.RetainerPage3);
-            Add(FFXIVClientStructs.FFXIV.Client.Game.InventoryType.RetainerPage4);
-            Add(FFXIVClientStructs.FFXIV.Client.Game.InventoryType.RetainerPage5);
-            Add(FFXIVClientStructs.FFXIV.Client.Game.InventoryType.RetainerPage6);
-            Add(FFXIVClientStructs.FFXIV.Client.Game.InventoryType.RetainerPage7);
+            Add(InventoryType.RetainerPage1);
+            Add(InventoryType.RetainerPage2);
+            Add(InventoryType.RetainerPage3);
+            Add(InventoryType.RetainerPage4);
+            Add(InventoryType.RetainerPage5);
+            Add(InventoryType.RetainerPage6);
+            Add(InventoryType.RetainerPage7);
         }
 
         return tmp.ToArray();
@@ -4286,8 +3873,8 @@ public sealed unsafe class Plugin : IDalamudPlugin
 
     private static bool TryFindFirstEmptySlotForSplit(
         InventoryManager* inv,
-        FFXIVClientStructs.FFXIV.Client.Game.InventoryType[] candidates,
-        out FFXIVClientStructs.FFXIV.Client.Game.InventoryType destType,
+        InventoryType[] candidates,
+        out InventoryType destType,
         out uint destSlot)
     {
         destType = default;
@@ -4319,7 +3906,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
     }
 
     private bool TryStartSplitHalfMove(
-        FFXIVClientStructs.FFXIV.Client.Game.InventoryType sourceType,
+        InventoryType sourceType,
         uint sourceSlot,
         long now,
         out string reason)
@@ -4398,8 +3985,8 @@ public sealed unsafe class Plugin : IDalamudPlugin
     }
 
     private static bool TryFindCompanyChestFirstEmptySlot(
-        FFXIVClientStructs.FFXIV.Client.Game.InventoryType[] pages,
-        out FFXIVClientStructs.FFXIV.Client.Game.InventoryType destType,
+        InventoryType[] pages,
+        out InventoryType destType,
         out uint destSlot)
     {
         destType = default;
@@ -4433,11 +4020,11 @@ public sealed unsafe class Plugin : IDalamudPlugin
     }
 
     private static bool TryFindCompanyChestBestStackSlot(
-        FFXIVClientStructs.FFXIV.Client.Game.InventoryType[] pages,
+        InventoryType[] pages,
         uint itemId,
         bool isHq,
         uint maxStack,
-        out FFXIVClientStructs.FFXIV.Client.Game.InventoryType destType,
+        out InventoryType destType,
         out uint destSlot)
     {
         destType = default;
@@ -4515,6 +4102,12 @@ public sealed unsafe class Plugin : IDalamudPlugin
                 // Fallback: if Trade window is open and we're expecting Trade, accept it anyway
                 // (prompt might be localized or say "How many would you like to trade?" etc.)
                 if (!IsTradeOpen())
+                    return false;
+            }
+            // Vendor sell dialogs may be localized; accept if prompt contains "sell" or vendor is open.
+            if (kind == PendingNumericKind.Sell && !prompt.Contains("sell", StringComparison.OrdinalIgnoreCase))
+            {
+                if (!IsVendorOpen())
                     return false;
             }
 
@@ -4793,14 +4386,14 @@ public sealed unsafe class Plugin : IDalamudPlugin
     // (removed) GetMoveContainerId:
     // Company Chest transfers must use InventoryType values directly with RaptureAtkModule.HandleItemMove.
     private static bool TryFindFirstCompanyChestEmptySlot(
-        out FFXIVClientStructs.FFXIV.Client.Game.InventoryType destType,
+        out InventoryType destType,
         out uint destSlot)
     {
         destType = default;
         destSlot = 0;
 
         // This method is static; use all known pages as a fallback, callers should prefer GetCompanyChestInventoryTypes().
-        var invTypes = Enum.GetValues<FFXIVClientStructs.FFXIV.Client.Game.InventoryType>()
+        var invTypes = Enum.GetValues<InventoryType>()
             .Where(IsCompanyChestType)
             .OrderBy(v => (int)v)
             .ToArray();
@@ -4838,13 +4431,13 @@ public sealed unsafe class Plugin : IDalamudPlugin
         uint itemId,
         bool isHq,
         uint maxStack,
-        out FFXIVClientStructs.FFXIV.Client.Game.InventoryType destType,
+        out InventoryType destType,
         out uint destSlot)
     {
         destType = default;
         destSlot = 0;
 
-        var invTypes = Enum.GetValues<FFXIVClientStructs.FFXIV.Client.Game.InventoryType>()
+        var invTypes = Enum.GetValues<InventoryType>()
             .Where(IsCompanyChestType)
             .OrderBy(v => (int)v)
             .ToArray();
@@ -4896,110 +4489,13 @@ public sealed unsafe class Plugin : IDalamudPlugin
         return bestFree > 0;
     }
 
-    private static uint GetItemStackSize(uint itemId)
-    {
-        try
-        {
-            // If item isn't known/stackable, return 1.
-            if (itemId == 0)
-                return 1;
+    // Use InventoryHelpers
+    private static uint GetItemStackSize(uint itemId) => InventoryHelpers.GetItemStackSize(itemId);
+    private static uint GetItemUiCategory(uint itemId) => InventoryHelpers.GetItemUiCategory(itemId);
 
-            lock (StackSizeCache)
-            {
-                if (StackSizeCache.TryGetValue(itemId, out var cached))
-                    return cached;
-            }
-
-            var sheet = DataManager.GetExcelSheet<Item>();
-            if (sheet == null)
-                return 999;
-
-            // Item row IDs are base IDs; InventoryItem.ItemId is expected to already be base.
-            var row = sheet.GetRow(itemId);
-            if (row.RowId == 0)
-                return 999;
-
-            // In modern Lumina sheets, Item.StackSize exists.
-            var s = row.StackSize;
-            var result = s <= 0 ? 1U : (uint)s;
-            lock (StackSizeCache)
-                StackSizeCache[itemId] = result;
-            return result;
-        }
-        catch
-        {
-            // Fallback: most stackables are 999, and non-stackables will hit maxStack <= 1 cases anyway.
-            return 999;
-        }
-    }
-
-    private static uint GetItemUiCategory(uint itemId)
-    {
-        try
-        {
-            if (itemId == 0)
-                return 0;
-
-            lock (ItemUiCategoryCache)
-            {
-                if (ItemUiCategoryCache.TryGetValue(itemId, out var cached))
-                    return cached;
-            }
-
-            var sheet = DataManager.GetExcelSheet<Item>();
-            if (sheet == null)
-                return 0;
-
-            var row = sheet.GetRow(itemId);
-            if (row.RowId == 0)
-                return 0;
-
-            // Prefer UI category; this tends to match how game sorts items visually.
-            uint result;
-            try
-            {
-                // Lumina RowRef usually exposes RowId.
-                result = row.ItemUICategory.RowId;
-            }
-            catch
-            {
-                result = 0;
-            }
-
-            lock (ItemUiCategoryCache)
-                ItemUiCategoryCache[itemId] = result;
-            return result;
-        }
-        catch
-        {
-            return 0;
-        }
-    }
-
-    private static bool TryGetItemInfo(
-        FFXIVClientStructs.FFXIV.Client.Game.InventoryType type,
-        int slot,
-        out uint itemId,
-        out bool isHq,
-        out uint quantity)
-    {
-        itemId = 0;
-        isHq = false;
-        quantity = 0;
-
-        var inv = InventoryManager.Instance();
-        if (inv == null)
-            return false;
-
-        var it = inv->GetInventorySlot(type, slot);
-        if (it == null)
-            return false;
-
-        itemId = it->ItemId;
-        isHq = it->Flags.HasFlag(InventoryItem.ItemFlags.HighQuality);
-        quantity = (uint)it->Quantity;
-        return itemId != 0;
-    }
+    // Use InventoryHelpers
+    private static bool TryGetItemInfo(InventoryType type, int slot, out uint itemId, out bool isHq, out uint quantity)
+        => InventoryHelpers.TryGetItemInfo(type, slot, out itemId, out isHq, out quantity);
 
     private ModifierMode? GetModifierModeLatched(long nowMs)
     {
@@ -5070,122 +4566,21 @@ public sealed unsafe class Plugin : IDalamudPlugin
         }
     }
 
-    private static bool IsPlayerInventoryType(FFXIVClientStructs.FFXIV.Client.Game.InventoryType inventoryType)
-        => inventoryType is
-            FFXIVClientStructs.FFXIV.Client.Game.InventoryType.Inventory1 or
-            FFXIVClientStructs.FFXIV.Client.Game.InventoryType.Inventory2 or
-            FFXIVClientStructs.FFXIV.Client.Game.InventoryType.Inventory3 or
-            FFXIVClientStructs.FFXIV.Client.Game.InventoryType.Inventory4;
+    // Use InventoryHelpers for these functions
+    private static bool IsPlayerInventoryType(InventoryType inventoryType) => InventoryHelpers.IsPlayerInventoryType(inventoryType);
+    private static bool IsArmouryType(InventoryType inventoryType) => InventoryHelpers.IsArmouryType(inventoryType);
+    private static bool IsSaddlebagOpen() => InventoryHelpers.IsSaddlebagOpen();
+    private static bool IsSaddlebagType(InventoryType inventoryType) => InventoryHelpers.IsSaddlebagType(inventoryType);
+    private static bool IsRetainerOpen() => InventoryHelpers.IsRetainerOpen();
+    private static bool IsRetainerType(InventoryType inventoryType) => InventoryHelpers.IsRetainerType(inventoryType);
+    private static bool IsCompanyChestOpen() => InventoryHelpers.IsCompanyChestOpen();
+    private static bool IsTradeOpen() => InventoryHelpers.IsTradeOpen();
+    private static bool IsVendorOpen() => InventoryHelpers.IsVendorOpen();
+    private static bool IsCompanyChestType(InventoryType inventoryType) => InventoryHelpers.IsCompanyChestType(inventoryType);
+    private static bool IsAddonVisibleAnyIndex(string addonName, int maxIndex = 6) => InventoryHelpers.IsAddonVisibleAnyIndex(addonName, maxIndex);
+    private static bool TryGetVisibleAddon(string addonName, out AtkUnitBase* addon, int maxIndex = 6) => InventoryHelpers.TryGetVisibleAddon(addonName, out addon, maxIndex);
 
-    private static bool IsArmouryType(FFXIVClientStructs.FFXIV.Client.Game.InventoryType inventoryType)
-        => inventoryType is
-            FFXIVClientStructs.FFXIV.Client.Game.InventoryType.ArmoryMainHand or
-            FFXIVClientStructs.FFXIV.Client.Game.InventoryType.ArmoryOffHand or
-            FFXIVClientStructs.FFXIV.Client.Game.InventoryType.ArmoryHead or
-            FFXIVClientStructs.FFXIV.Client.Game.InventoryType.ArmoryBody or
-            FFXIVClientStructs.FFXIV.Client.Game.InventoryType.ArmoryHands or
-            FFXIVClientStructs.FFXIV.Client.Game.InventoryType.ArmoryWaist or
-            FFXIVClientStructs.FFXIV.Client.Game.InventoryType.ArmoryLegs or
-            FFXIVClientStructs.FFXIV.Client.Game.InventoryType.ArmoryFeets or
-            FFXIVClientStructs.FFXIV.Client.Game.InventoryType.ArmoryEar or
-            FFXIVClientStructs.FFXIV.Client.Game.InventoryType.ArmoryNeck or
-            FFXIVClientStructs.FFXIV.Client.Game.InventoryType.ArmoryWrist or
-            FFXIVClientStructs.FFXIV.Client.Game.InventoryType.ArmoryRings or
-            FFXIVClientStructs.FFXIV.Client.Game.InventoryType.ArmorySoulCrystal;
-
-    private static bool IsAddonVisible(string addonName, int index = 1)
-    {
-        var addon = GameGui.GetAddonByName(addonName, index);
-        return !addon.IsNull && addon.IsVisible;
-    }
-
-    private static bool IsAddonVisibleAnyIndex(string addonName, int maxIndex = 6)
-    {
-        for (var i = 1; i <= maxIndex; i++)
-        {
-            if (IsAddonVisible(addonName, i))
-                return true;
-        }
-
-        return false;
-    }
-
-    private static bool IsAnyAddonVisible(IEnumerable<string> addonNames, int index = 1)
-    {
-        foreach (var name in addonNames)
-        {
-            if (IsAddonVisible(name, index))
-                return true;
-        }
-
-        return false;
-    }
-
-    private static bool IsAnyAddonVisibleAnyIndex(IEnumerable<string> addonNames, int maxIndex = 6)
-    {
-        foreach (var name in addonNames)
-        {
-            if (IsAddonVisibleAnyIndex(name, maxIndex))
-                return true;
-        }
-
-        return false;
-    }
-
-    private static bool IsInventoryAndSaddlebagOpen()
-    {
-        var inventoryOpen = IsAddonVisibleAnyIndex("Inventory");
-        var saddlebagOpen = IsAddonVisibleAnyIndex("InventoryBuddy") || IsAddonVisibleAnyIndex("InventoryBuddy2");
-        return inventoryOpen && saddlebagOpen;
-    }
-
-    private static bool IsSaddlebagOpen()
-        => IsAddonVisibleAnyIndex("InventoryBuddy") || IsAddonVisibleAnyIndex("InventoryBuddy2");
-
-    private static bool IsSaddlebagType(FFXIVClientStructs.FFXIV.Client.Game.InventoryType inventoryType)
-        => inventoryType is
-            FFXIVClientStructs.FFXIV.Client.Game.InventoryType.SaddleBag1 or
-            FFXIVClientStructs.FFXIV.Client.Game.InventoryType.SaddleBag2 or
-            FFXIVClientStructs.FFXIV.Client.Game.InventoryType.PremiumSaddleBag1 or
-            FFXIVClientStructs.FFXIV.Client.Game.InventoryType.PremiumSaddleBag2;
-
-    private static bool IsRetainerOpen()
-    {
-        // Common retainer inventory addons.
-        // (SimpleTweaks checks "RetainerGrid0" for retainer inventory visibility.)
-        return IsAddonVisibleAnyIndex("RetainerGrid0") ||
-               IsAddonVisibleAnyIndex("RetainerSellList") ||
-               IsAddonVisibleAnyIndex("RetainerGrid");
-    }
-
-    private static bool IsRetainerType(FFXIVClientStructs.FFXIV.Client.Game.InventoryType inventoryType)
-        => inventoryType is
-            FFXIVClientStructs.FFXIV.Client.Game.InventoryType.RetainerPage1 or
-            FFXIVClientStructs.FFXIV.Client.Game.InventoryType.RetainerPage2 or
-            FFXIVClientStructs.FFXIV.Client.Game.InventoryType.RetainerPage3 or
-            FFXIVClientStructs.FFXIV.Client.Game.InventoryType.RetainerPage4 or
-            FFXIVClientStructs.FFXIV.Client.Game.InventoryType.RetainerPage5 or
-            FFXIVClientStructs.FFXIV.Client.Game.InventoryType.RetainerPage6 or
-            FFXIVClientStructs.FFXIV.Client.Game.InventoryType.RetainerPage7;
-
-    private static bool IsCompanyChestOpen()
-        => IsAddonVisibleAnyIndex(FreeCompanyChestAddonName);
-
-    private static bool IsTradeOpen()
-        => IsAddonVisibleAnyIndex("Trade") || IsAddonVisibleAnyIndex("TradeWindow");
-
-    private static bool IsCompanyChestType(FFXIVClientStructs.FFXIV.Client.Game.InventoryType inventoryType)
-    {
-        var name = Enum.GetName(typeof(FFXIVClientStructs.FFXIV.Client.Game.InventoryType), inventoryType);
-        if (string.IsNullOrEmpty(name))
-            return false;
-
-        // We only want the *item compartments*, not crystals/gil/etc.
-        // Observed names: FreeCompanyPage1..FreeCompanyPage5
-        return name.StartsWith("FreeCompanyPage", StringComparison.OrdinalIgnoreCase);
-    }
-
-    private bool TryMapCompanyChestTabParamToPage(int eventParam, out FFXIVClientStructs.FFXIV.Client.Game.InventoryType page)
+    private bool TryMapCompanyChestTabParamToPage(int eventParam, out InventoryType page)
     {
         page = default;
         try
@@ -5217,205 +4612,22 @@ public sealed unsafe class Plugin : IDalamudPlugin
         return false;
     }
 
-    private static bool TryGetVisibleAddon(string addonName, out AtkUnitBase* addon, int maxIndex = 6)
-    {
-        addon = null;
-        for (var i = 1; i <= maxIndex; i++)
-        {
-            var a = GameGui.GetAddonByName(addonName, i);
-            if (!a.IsNull && a.IsVisible)
-            {
-                addon = (AtkUnitBase*)a.Address;
-                return true;
-            }
-        }
+    // Use InventoryHelpers (implementation moved to InventoryHelpers.cs)
 
-        return false;
-    }
-
+    // Use ContextMenuHandler
     private void CloseContextMenuAddon(AgentInventoryContext* agent, AtkUnitBase* contextMenuAddon)
-    {
-        try { agent->AgentInterface.Hide(); } catch { /* ignore */ }
-        try { contextMenuAddon->Hide(false, true, 0); } catch { /* ignore */ }
-        try { atkUnitBaseClose?.Invoke(contextMenuAddon, 0); } catch { /* ignore */ }
-    }
+        => ContextMenuHandler.CloseContextMenuAddon(agent, contextMenuAddon);
 
+    // Use ContextMenuHandler
     private static bool ContextLabelMatches(AutoContextAction desiredAction, string menuText)
-    {
-        var t = menuText.Trim();
-        static bool Has(string s, string needle) => s.Contains(needle, StringComparison.OrdinalIgnoreCase);
+        => ContextMenuHandler.ContextLabelMatches((ContextMenuHandler.AutoContextAction)desiredAction, menuText);
 
-        return desiredAction switch
-        {
-            AutoContextAction.AddAllToSaddlebag =>
-                t.Equals("Add All to Saddlebag", StringComparison.OrdinalIgnoreCase) ||
-                (Has(t, "Add All") && Has(t, "Saddlebag")),
-
-            AutoContextAction.RemoveAllFromSaddlebag =>
-                t.Equals("Remove All from Saddlebag", StringComparison.OrdinalIgnoreCase) ||
-                (Has(t, "Remove All") && Has(t, "Saddlebag")) ||
-                (Has(t, "Remove") && Has(t, "Saddlebag")) ||
-                t.Equals("Remove All", StringComparison.OrdinalIgnoreCase) ||
-                ((Has(t, "Retrieve") || Has(t, "Take out") || Has(t, "Take Out")) && Has(t, "Saddlebag")),
-
-            AutoContextAction.PlaceInArmouryChest =>
-                t.Equals("Place in Armoury Chest", StringComparison.OrdinalIgnoreCase) ||
-                (Has(t, "Place") && (Has(t, "Armoury") || Has(t, "Armory")) && Has(t, "Chest")),
-
-            AutoContextAction.ReturnToInventory =>
-                t.Equals("Return to Inventory", StringComparison.OrdinalIgnoreCase) ||
-                (Has(t, "Return") && Has(t, "Inventory")),
-
-            AutoContextAction.EntrustToRetainer =>
-                t.Equals("Entrust to Retainer", StringComparison.OrdinalIgnoreCase) ||
-                (Has(t, "Entrust") && Has(t, "Retainer")),
-
-            AutoContextAction.RetrieveFromRetainer =>
-                t.Equals("Retrieve from Retainer", StringComparison.OrdinalIgnoreCase) ||
-                (Has(t, "Retrieve") && Has(t, "Retainer")),
-
-            AutoContextAction.RemoveFromCompanyChest =>
-                t.Equals("Remove", StringComparison.OrdinalIgnoreCase) ||
-                (Has(t, "Remove") && (Has(t, "Company") || Has(t, "Chest"))) ||
-                (Has(t, "Withdraw") && (Has(t, "Company") || Has(t, "Chest"))),
-
-            AutoContextAction.Split =>
-                t.Equals("Split", StringComparison.OrdinalIgnoreCase) ||
-                t.StartsWith("Split", StringComparison.OrdinalIgnoreCase),
-
-            AutoContextAction.Sort =>
-                t.Equals("Sort", StringComparison.OrdinalIgnoreCase) ||
-                t.StartsWith("Sort", StringComparison.OrdinalIgnoreCase),
-
-            AutoContextAction.Trade =>
-                t.Equals("Trade", StringComparison.OrdinalIgnoreCase) ||
-                t.StartsWith("Trade", StringComparison.OrdinalIgnoreCase) ||
-                (Has(t, "Trade") && Has(t, "Item")),
-
-            _ => false,
-        };
-    }
-
-    private static string ReadAtkValueString(AtkValue v)
-    {
-        if (v.String == null)
-            return string.Empty;
-
-        try
-        {
-            // SimpleTweaks-style decoding.
-            return Marshal.PtrToStringUTF8(new IntPtr(v.String))?.TrimEnd('\0') ?? string.Empty;
-        }
-        catch
-        {
-            return ReadUtf8(v.String);
-        }
-    }
-
-    private static string ReadUtf8(byte* ptr)
-    {
-        if (ptr == null)
-            return string.Empty;
-
-        var len = 0;
-        while (ptr[len] != 0)
-            len++;
-
-        return len <= 0 ? string.Empty : Encoding.UTF8.GetString(ptr, len);
-    }
-
-    private const int UnitListCount = 18;
-
-    private static AtkUnitBase* GetAddonById(uint id)
-    {
-        var unitManagers = &AtkStage.Instance()->RaptureAtkUnitManager->AtkUnitManager.DepthLayerOneList;
-        for (var i = 0; i < UnitListCount; i++)
-        {
-            var unitManager = &unitManagers[i];
-            for (var j = 0; j < Math.Min(unitManager->Count, unitManager->Entries.Length); j++)
-            {
-                var unitBase = unitManager->Entries[j].Value;
-                if (unitBase != null && unitBase->Id == id)
-                    return unitBase;
-            }
-        }
-
-        return null;
-    }
-
-    private static AtkValue* CreateAtkValueArray(params object[] values)
-    {
-        var atkValues = (AtkValue*)Marshal.AllocHGlobal(values.Length * sizeof(AtkValue));
-        if (atkValues == null)
-            return null;
-
-        try
-        {
-            for (var i = 0; i < values.Length; i++)
-            {
-                var v = values[i];
-                switch (v)
-                {
-                    case uint u:
-                        atkValues[i].Type = AtkValueType.UInt;
-                        atkValues[i].UInt = u;
-                        break;
-                    case int n:
-                        atkValues[i].Type = AtkValueType.Int;
-                        atkValues[i].Int = n;
-                        break;
-                    case float f:
-                        atkValues[i].Type = AtkValueType.Float;
-                        atkValues[i].Float = f;
-                        break;
-                    case bool b:
-                        atkValues[i].Type = AtkValueType.Bool;
-                        atkValues[i].Byte = (byte)(b ? 1 : 0);
-                        break;
-                    case string s:
-                    {
-                        atkValues[i].Type = AtkValueType.String;
-                        var bytes = Encoding.UTF8.GetBytes(s);
-                        var alloc = Marshal.AllocHGlobal(bytes.Length + 1);
-                        Marshal.Copy(bytes, 0, alloc, bytes.Length);
-                        Marshal.WriteByte(alloc, bytes.Length, 0);
-                        atkValues[i].String = (byte*)alloc;
-                        break;
-                    }
-                    default:
-                        throw new ArgumentException($"Unsupported AtkValue type {v.GetType()}");
-                }
-            }
-        }
-        catch
-        {
-            Marshal.FreeHGlobal(new IntPtr(atkValues));
-            return null;
-        }
-
-        return atkValues;
-    }
-
-    private static void GenerateCallback(AtkUnitBase* unitBase, params object[] values)
-    {
-        var atkValues = CreateAtkValueArray(values);
-        if (atkValues == null)
-            return;
-
-        try
-        {
-            unitBase->FireCallback((uint)values.Length, atkValues);
-        }
-        finally
-        {
-            for (var i = 0; i < values.Length; i++)
-            {
-                if (atkValues[i].Type == AtkValueType.String)
-                    Marshal.FreeHGlobal(new IntPtr(atkValues[i].String));
-            }
-
-            Marshal.FreeHGlobal(new IntPtr(atkValues));
-        }
-    }
+    // Use AtkValueHelpers
+    private static string ReadAtkValueString(AtkValue v) => AtkValueHelpers.ReadAtkValueString(v);
+    private static string ReadUtf8(byte* ptr) => AtkValueHelpers.ReadUtf8(ptr);
+    private static AtkUnitBase* GetAddonById(uint id) => AtkValueHelpers.GetAddonById(id);
+    private static void GenerateCallback(AtkUnitBase* unitBase, params object[] values) => AtkValueHelpers.GenerateCallback(unitBase, values);
+    private static void MakeAddonInvisible(AtkUnitBase* addon) => AtkValueHelpers.MakeAddonInvisible(addon);
+    private static void MakeAddonVisible(AtkUnitBase* addon) => AtkValueHelpers.MakeAddonVisible(addon);
 }
 

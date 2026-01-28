@@ -90,6 +90,25 @@ public class QuickTransferWindow : Window, IDisposable
             }
             ImGui.SameLine();
             ImGui.TextColored(new Vector4(0.85f, 0.75f, 0.45f, 0.9f), "(Best effort; disable if it misbehaves)");
+
+            // Vendor Quick Sell
+            var enableVendorQuickSell = _config.EnableVendorQuickSell;
+            if (ImGui.Checkbox("Enable Vendor Quick Sell###EnableVendorQuickSell", ref enableVendorQuickSell))
+            {
+                _config.EnableVendorQuickSell = enableVendorQuickSell;
+                _config.Save();
+            }
+            ImGui.SameLine();
+            ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 0.7f), "(Shift+RClick: auto-select \"Sell\" when vendor is open)");
+
+            var autoConfirmVendorSell = _config.AutoConfirmVendorSell;
+            if (ImGui.Checkbox("Auto-confirm vendor sell dialogs###AutoConfirmVendorSell", ref autoConfirmVendorSell))
+            {
+                _config.AutoConfirmVendorSell = autoConfirmVendorSell;
+                _config.Save();
+            }
+            ImGui.SameLine();
+            ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 0.7f), "(Auto-fill quantity, confirm \"How many?\", and click OK on \"Are you certain?\")");
             
             // Transfer cooldown
             ImGui.Spacing();
@@ -118,6 +137,7 @@ public class QuickTransferWindow : Window, IDisposable
             ImGui.BulletText("Retainer + Saddlebags: Retainer → \"Add All to Saddlebag\", Saddlebags → \"Entrust to Retainer\"");
             ImGui.BulletText("Inventory + Armoury (no special container): (Gear) Inventory → \"Place in Armoury Chest\", Armoury → \"Return to Inventory\"");
             ImGui.BulletText("Company Chest (FreeCompanyChest) open: Shift+RClick Inventory/Armoury deposits, Shift+RClick Company Chest withdraws (\"Remove\")");
+            ImGui.BulletText("Vendor Shop open: Shift+RClick to auto-select \"Sell\"; enable \"Auto-confirm vendor sell\" to auto-fill quantity and confirm.");
             ImGui.BulletText("Middle-Click: Sort the clicked container when a \"Sort\" menu entry exists. In Company Chest, MMB runs an organize pass (stack + compact).");
             ImGui.BulletText("Use /qt or click 'Open Config' in plugin list to reopen this window");
             
