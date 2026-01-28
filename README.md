@@ -2,16 +2,19 @@
 
 A Dalamud plugin for Final Fantasy XIV that adds quick inventory actions via the game's existing context menus:
 
-- **Shift + Right Click**: quick transfers
+- **Shift + Right Click**: quick transfers (including vendor sell when shop is open)
 - **Ctrl + Right Click**: armoury-mode transfers (when a special container is open)
 - **Alt + Right Click**: split a stack in half
 
 ## Features
 
 - **Quick Transfer**: Hold Shift and right-click an item to automatically trigger the matching context menu action
+- **Vendor Quick Sell**: With a vendor shop open, Shift + Right Click auto-selects **Sell**. With **Auto-confirm vendor sell** enabled, quantity dialogs and "Are you certain?" confirmations are auto-filled and confirmed
 - **Trade Window Support**: Shift + Right Click items from inventory into Trade window with auto-fill max quantity
+- **Company Chest**: Shift + Right Click to deposit/withdraw when Free Company Chest is open; middle-click runs organize (stack + compact)
 - **Armoury Mode**: Hold Ctrl and right-click to prioritize armoury actions while a special container is open
 - **Split Half**: Hold Alt and right-click to split a stack and auto-fill half
+- **Middle-Click Sort**: Middle-click an item to auto-select **Sort** (or organize in FC chest)
 - **Cooldown Protection**: Built-in cooldown to prevent accidental double-moves
 - **Debug Mode**: For troubleshooting and development (disabled by default)
 
@@ -58,6 +61,10 @@ The plugin only clicks **existing** context menu options when they are available
   - Armoury → **Return to Inventory**
 - **Trade Window**
   - Inventory → **Trade** (auto-fills and confirms max quantity for stackable items)
+- **Vendor Shop**
+  - With a vendor shop open, Shift + Right Click → **Sell**. Enable **Auto-confirm vendor sell** to auto-fill quantity and click OK on "Are you certain?" dialogs.
+- **Company Chest (Free Company Chest)**
+  - Shift + Right Click Inventory/Armoury → deposit; Shift + Right Click Company Chest → **Remove** (withdraw)
 
 If an option is not present for the clicked item, **nothing happens**.
 
@@ -86,8 +93,10 @@ If an option is not present for the clicked item, **nothing happens**.
 | Transfer Cooldown | Milliseconds between transfers | 200 |
 | Enable Middle-Click Sort | Enable MMB sort behavior | True |
 | Enable Company Chest | Enable FC chest helpers | True |
-| Auto-confirm quantity prompts | Auto-fill and confirm InputNumeric prompts (Split / FC chest) | True |
 | Company Chest: Middle-Click Organize | Enable MMB organize (stack+compact) in FC chest | True |
+| Auto-confirm quantity prompts | Auto-fill and confirm InputNumeric prompts (Split / FC chest) | True |
+| Enable Vendor Quick Sell | Shift+RClick auto-selects "Sell" when vendor is open | True |
+| Auto-confirm vendor sell | Auto-fill quantity and click OK on sell dialogs ("How many?", "Are you certain?") | True |
 
 ## Development
 
@@ -108,6 +117,8 @@ dotnet build --configuration Debug
 dotnet build --configuration Release
 ```
 
+Release build produces `bin/Release/QuickTransfer/latest.zip` for distribution.
+
 ### Testing
 
 1. Enable "Dev Plugin Locations" in Dalamud settings
@@ -121,8 +132,12 @@ QuickTransfer/
 ├── QuickTransfer.cs          # Main plugin class
 ├── QuickTransfer.csproj      # Project file
 ├── QuickTransferWindow.cs    # Configuration UI
+├── ContextMenuHandler.cs     # Context menu matching and selection
+├── InventoryHelpers.cs       # Inventory/addon detection
+├── DragDropHelpers.cs        # Drag-drop parsing
+├── AtkValueHelpers.cs        # AtkValue and addon utilities
 ├── pluginmaster.json         # Custom repository metadata (for Dalamud)
-└── README.md                # This file
+└── README.md                 # This file
 ```
 
 ### Adding New Features
@@ -142,7 +157,7 @@ QuickTransfer/
 
 ### Transfers Not Working
 - Make sure the plugin is enabled
-- Check that you have both source and target inventories open
+- Check that you have both source and target inventories open (or the correct container for the action)
 - Ensure the target inventory has space
 - Try increasing the transfer cooldown
 
@@ -155,7 +170,7 @@ QuickTransfer/
 
 Enable Debug Mode to see transfer attempts in chat:
 ```
-[QuickTransfer] (Shift+RClick) Selected context action 'Remove All from Saddlebag' (idx=0) via deferred OnMenuOpened.
+[QuickTransfer] (Shift+RClick) Selected context action 'Remove All from Saddlebag' (idx=0) via OpenForItemSlot.
 ```
 
 ## Compatibility
@@ -187,8 +202,13 @@ This plugin is licensed under the MIT License - see the `LICENSE` file for detai
 
 ## Changelog
 
+### Version 1.0.5
+- **New**: Vendor Quick Sell — Shift + Right Click at a vendor shop auto-selects **Sell**
+- **New**: Auto-confirm vendor sell dialogs — auto-fill quantity ("How many to sell?") and click OK on "Are you certain you wish to sell it?" (unique/untradable items)
+- README and configuration table updated for all current options
+
 ### Version 1.0.4
-- **New**: Trade window support - Shift + Right Click items from inventory into Trade window
+- **New**: Trade window support — Shift + Right Click items from inventory into Trade window
 - **New**: Auto-fill and confirm max quantity when trading stackable items
 - Trade window actions work independently of Company Chest settings
 
