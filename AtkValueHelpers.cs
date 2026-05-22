@@ -1,13 +1,13 @@
-using System;
+using FFXIVClientStructs.FFXIV.Client.System.String;
+using FFXIVClientStructs.FFXIV.Component.GUI;
 using System.Runtime.InteropServices;
 using System.Text;
-using FFXIVClientStructs.FFXIV.Component.GUI;
-using AtkValueType = FFXIVClientStructs.FFXIV.Component.GUI.ValueType;
+using AtkValueType = FFXIVClientStructs.FFXIV.Component.GUI.AtkValueType;
 
 namespace QuickTransfer;
 
 /// <summary>
-/// Utility functions for working with AtkValue structures.
+///     Utility functions for working with AtkValue structures.
 /// </summary>
 internal static unsafe class AtkValueHelpers
 {
@@ -15,13 +15,13 @@ internal static unsafe class AtkValueHelpers
 
     public static string ReadAtkValueString(AtkValue v)
     {
-        if (v.String == null)
+        if ((byte*)v.String == null)
             return string.Empty;
 
         try
         {
             // SimpleTweaks-style decoding.
-            return Marshal.PtrToStringUTF8(new IntPtr(v.String))?.TrimEnd('\0') ?? string.Empty;
+            return Marshal.PtrToStringUTF8(new(v.String))?.TrimEnd('\0') ?? string.Empty;
         }
         catch
         {
@@ -34,8 +34,8 @@ internal static unsafe class AtkValueHelpers
         if (ptr == null)
             return string.Empty;
 
-        var len = 0;
-        while (ptr[len] != 0)
+        int len = 0;
+        while(ptr[len] != 0)
             len++;
 
         return len <= 0 ? string.Empty : Encoding.UTF8.GetString(ptr, len);
@@ -46,14 +46,14 @@ internal static unsafe class AtkValueHelpers
         if (dst == null || string.IsNullOrEmpty(value))
             return;
 
-        var bytes = Encoding.UTF8.GetBytes(value);
-        var max = Math.Min(bytes.Length, 255); // reasonable limit
-        for (var i = 0; i < max; i++)
+        byte[] bytes = Encoding.UTF8.GetBytes(value);
+        int max = Math.Min(bytes.Length, 255); // reasonable limit
+        for(int i = 0; i < max; i++)
             dst[i] = bytes[i];
         dst[max] = 0;
     }
 
-    public static void WriteUtf8StringInPlace(FFXIVClientStructs.FFXIV.Client.System.String.Utf8String* s, string value)
+    public static void WriteUtf8StringInPlace(Utf8String* s, string value)
     {
         if (s == null)
             return;
@@ -63,13 +63,13 @@ internal static unsafe class AtkValueHelpers
 
     public static AtkUnitBase* GetAddonById(uint id)
     {
-        var unitManagers = &AtkStage.Instance()->RaptureAtkUnitManager->AtkUnitManager.DepthLayerOneList;
-        for (var i = 0; i < UnitListCount; i++)
+        AtkUnitList* unitManagers = &AtkStage.Instance()->RaptureAtkUnitManager->AtkUnitManager.DepthLayerOneList;
+        for(int i = 0; i < UnitListCount; i++)
         {
-            var unitManager = &unitManagers[i];
-            for (var j = 0; j < Math.Min(unitManager->Count, unitManager->Entries.Length); j++)
+            AtkUnitList* unitManager = &unitManagers[i];
+            for(int j = 0; j < Math.Min(unitManager->Count, unitManager->Entries.Length); j++)
             {
-                var unitBase = unitManager->Entries[j].Value;
+                AtkUnitBase* unitBase = unitManager->Entries[j].Value;
                 if (unitBase != null && unitBase->Id == id)
                     return unitBase;
             }
@@ -80,15 +80,15 @@ internal static unsafe class AtkValueHelpers
 
     public static AtkValue* CreateAtkValueArray(params object[] values)
     {
-        var atkValues = (AtkValue*)Marshal.AllocHGlobal(values.Length * sizeof(AtkValue));
+        AtkValue* atkValues = (AtkValue*)Marshal.AllocHGlobal(values.Length * sizeof(AtkValue));
         if (atkValues == null)
             return null;
 
         try
         {
-            for (var i = 0; i < values.Length; i++)
+            for(int i = 0; i < values.Length; i++)
             {
-                var v = values[i];
+                object v = values[i];
                 switch (v)
                 {
                     case uint u:
@@ -110,8 +110,8 @@ internal static unsafe class AtkValueHelpers
                     case string s:
                     {
                         atkValues[i].Type = AtkValueType.String;
-                        var bytes = Encoding.UTF8.GetBytes(s);
-                        var alloc = Marshal.AllocHGlobal(bytes.Length + 1);
+                        byte[] bytes = Encoding.UTF8.GetBytes(s);
+                        nint alloc = Marshal.AllocHGlobal(bytes.Length + 1);
                         Marshal.Copy(bytes, 0, alloc, bytes.Length);
                         Marshal.WriteByte(alloc, bytes.Length, 0);
                         atkValues[i].String = (byte*)alloc;
@@ -124,7 +124,7 @@ internal static unsafe class AtkValueHelpers
         }
         catch
         {
-            Marshal.FreeHGlobal(new IntPtr(atkValues));
+            Marshal.FreeHGlobal(new(atkValues));
             return null;
         }
 
@@ -133,7 +133,7 @@ internal static unsafe class AtkValueHelpers
 
     public static void GenerateCallback(AtkUnitBase* unitBase, params object[] values)
     {
-        var atkValues = CreateAtkValueArray(values);
+        AtkValue* atkValues = CreateAtkValueArray(values);
         if (atkValues == null)
             return;
 
@@ -143,13 +143,13 @@ internal static unsafe class AtkValueHelpers
         }
         finally
         {
-            for (var i = 0; i < values.Length; i++)
+            for(int i = 0; i < values.Length; i++)
             {
                 if (atkValues[i].Type == AtkValueType.String)
-                    Marshal.FreeHGlobal(new IntPtr(atkValues[i].String));
+                    Marshal.FreeHGlobal(new(atkValues[i].String));
             }
 
-            Marshal.FreeHGlobal(new IntPtr(atkValues));
+            Marshal.FreeHGlobal(new(atkValues));
         }
     }
 
@@ -160,7 +160,7 @@ internal static unsafe class AtkValueHelpers
         {
             if (values == null || idx < 0 || idx >= count)
                 return false;
-            var v = values + idx;
+            AtkValue* v = values + idx;
             if (v->Type == AtkValueType.Int)
             {
                 value = v->Int;
@@ -183,7 +183,7 @@ internal static unsafe class AtkValueHelpers
     {
         if (addon == null)
             return;
-        var root = addon->RootNode;
+        AtkResNode* root = addon->RootNode;
         if (root == null)
             return;
 
@@ -196,7 +196,7 @@ internal static unsafe class AtkValueHelpers
     {
         if (addon == null)
             return;
-        var root = addon->RootNode;
+        AtkResNode* root = addon->RootNode;
         if (root == null)
             return;
 

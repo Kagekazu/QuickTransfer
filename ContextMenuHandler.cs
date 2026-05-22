@@ -1,25 +1,14 @@
-using System;
-using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.UI.Agent;
 using FFXIVClientStructs.FFXIV.Component.GUI;
-using AtkValueType = FFXIVClientStructs.FFXIV.Component.GUI.ValueType;
+using AtkValueType = FFXIVClientStructs.FFXIV.Component.GUI.AtkValueType;
 
 namespace QuickTransfer;
 
 /// <summary>
-/// Handles context menu selection and matching logic.
+///     Handles context menu selection and matching logic.
 /// </summary>
 internal static unsafe class ContextMenuHandler
 {
-    public enum ModifierMode
-    {
-        Shift,
-        Ctrl,
-        Alt,
-    }
-    // Access services through Plugin's static properties
-    private static IGameGui GameGui => Plugin.GameGui;
-
     public enum AutoContextAction
     {
         AddAllToSaddlebag,
@@ -32,12 +21,21 @@ internal static unsafe class ContextMenuHandler
         Split,
         Sort,
         Trade,
-        Sell,
+        Sell
     }
+
+    public enum ModifierMode
+    {
+        Shift,
+        Ctrl,
+        Alt
+    }
+
+    // Access services through Plugin's static properties
 
     public static bool ContextLabelMatches(AutoContextAction desiredAction, string menuText)
     {
-        var t = menuText.Trim();
+        string t = menuText.Trim();
         static bool Has(string s, string needle) => s.Contains(needle, StringComparison.OrdinalIgnoreCase);
 
         return desiredAction switch
@@ -92,14 +90,22 @@ internal static unsafe class ContextMenuHandler
                 t.StartsWith("Sell", StringComparison.OrdinalIgnoreCase) ||
                 (Has(t, "Sell") && Has(t, "Item")),
 
-            _ => false,
+            var _ => false
         };
     }
 
     public static void CloseContextMenuAddon(AgentInventoryContext* agent, AtkUnitBase* contextMenuAddon)
     {
-        try { agent->AgentInterface.Hide(); } catch { /* ignore */ }
-        try { contextMenuAddon->Hide(false, true, 0); } catch { /* ignore */ }
+        try { agent->AgentInterface.Hide(); }
+        catch
+        {
+            /* ignore */
+        }
+        try { contextMenuAddon->Hide(false, true, 0); }
+        catch
+        {
+            /* ignore */
+        }
     }
 
     public static bool TryAutoSelectAndClose(
@@ -115,19 +121,19 @@ internal static unsafe class ContextMenuHandler
         chosenIndex = -1;
 
         // Single-pass: decode each label once, record first match per action.
-        var foundAny = false;
+        bool foundAny = false;
 
         int removeIdx = -1, addIdx = -1, placeIdx = -1, returnIdx = -1, entrustIdx = -1, retrieveIdx = -1, companyRemoveIdx = -1, splitIdx = -1, tradeIdx = -1, sellIdx = -1;
         string? removeTxt = null, addTxt = null, placeTxt = null, returnTxt = null, entrustTxt = null, retrieveTxt = null, companyRemoveTxt = null, splitTxt = null, tradeTxt = null, sellTxt = null;
 
-        var max = Math.Min(agent->ContextItemCount, 64);
-        for (var i = 0; i < max; i++)
+        int max = Math.Min(agent->ContextItemCount, 64);
+        for(int i = 0; i < max; i++)
         {
-            var param = agent->EventParams[agent->ContexItemStartIndex + i];
+            AtkValue param = agent->EventParams[agent->ContexItemStartIndex + i];
             if (param.Type is not (AtkValueType.String or AtkValueType.ManagedString))
                 continue;
 
-            var text = AtkValueHelpers.ReadAtkValueString(param);
+            string text = AtkValueHelpers.ReadAtkValueString(param);
             if (string.IsNullOrWhiteSpace(text))
                 continue;
 
@@ -206,11 +212,11 @@ internal static unsafe class ContextMenuHandler
         if (!foundAny)
             return false;
 
-        var saddlebagOpen = InventoryHelpers.IsSaddlebagOpen();
-        var retainerOpen = InventoryHelpers.IsRetainerOpen();
-        var companyChestOpen = InventoryHelpers.IsCompanyChestOpen();
-        var tradeOpen = InventoryHelpers.IsTradeOpen();
-        var vendorOpen = InventoryHelpers.IsVendorOpen();
+        bool saddlebagOpen = InventoryHelpers.IsSaddlebagOpen();
+        bool retainerOpen = InventoryHelpers.IsRetainerOpen();
+        bool companyChestOpen = InventoryHelpers.IsCompanyChestOpen();
+        bool tradeOpen = InventoryHelpers.IsTradeOpen();
+        bool vendorOpen = InventoryHelpers.IsVendorOpen();
 
         // Choose the best action that exists in the menu.
         (int idx, string? txt) chosen;
@@ -236,7 +242,7 @@ internal static unsafe class ContextMenuHandler
         {
             chosen = returnIdx >= 0 ? (returnIdx, returnTxt) :
                 placeIdx >= 0 ? (placeIdx, placeTxt) :
-                (-1, (string?)null);
+                (-1, null);
         }
         else if (retainerOpen)
         {
@@ -249,7 +255,7 @@ internal static unsafe class ContextMenuHandler
                     entrustIdx >= 0 ? (entrustIdx, entrustTxt) :
                     // last-resort fallback
                     removeIdx >= 0 ? (removeIdx, removeTxt) :
-                    (-1, (string?)null);
+                    (-1, null);
             }
             else
             {
@@ -258,20 +264,20 @@ internal static unsafe class ContextMenuHandler
                 // - Player item: Entrust to Retainer
                 chosen = retrieveIdx >= 0 ? (retrieveIdx, retrieveTxt) :
                     entrustIdx >= 0 ? (entrustIdx, entrustTxt) :
-                    (-1, (string?)null);
+                    (-1, null);
             }
         }
         else if (saddlebagOpen)
         {
             chosen = removeIdx >= 0 ? (removeIdx, removeTxt) :
                 addIdx >= 0 ? (addIdx, addTxt) :
-                (-1, (string?)null);
+                (-1, null);
         }
         else
         {
             chosen = placeIdx >= 0 ? (placeIdx, placeTxt) :
                 returnIdx >= 0 ? (returnIdx, returnTxt) :
-                (-1, (string?)null);
+                (-1, null);
         }
 
         if (chosen.idx < 0 || string.IsNullOrWhiteSpace(chosen.txt))
@@ -302,17 +308,16 @@ internal static unsafe class ContextMenuHandler
         chosenText = string.Empty;
         chosenIndex = -1;
 
-        var undoSortIdx = -1;
-        string? undoSortText = null;
+        int undoSortIdx = -1;
 
-        var max = Math.Min(agent->ContextItemCount, 64);
-        for (var i = 0; i < max; i++)
+        int max = Math.Min(agent->ContextItemCount, 64);
+        for(int i = 0; i < max; i++)
         {
-            var param = agent->EventParams[agent->ContexItemStartIndex + i];
+            AtkValue param = agent->EventParams[agent->ContexItemStartIndex + i];
             if (param.Type is not (AtkValueType.String or AtkValueType.ManagedString))
                 continue;
 
-            var text = AtkValueHelpers.ReadAtkValueString(param);
+            string text = AtkValueHelpers.ReadAtkValueString(param);
             if (string.IsNullOrWhiteSpace(text))
                 continue;
 
@@ -321,7 +326,6 @@ internal static unsafe class ContextMenuHandler
             if (undoSortIdx < 0 && text.Trim().Equals("Undo Sort", StringComparison.OrdinalIgnoreCase))
             {
                 undoSortIdx = i;
-                undoSortText = text;
             }
 
             if (!ContextLabelMatches(AutoContextAction.Sort, text))
@@ -337,7 +341,11 @@ internal static unsafe class ContextMenuHandler
         // No "Sort" entry. If "Undo Sort" exists, we're already sorted; close the menu without changing state.
         if (undoSortIdx >= 0)
         {
-            try { CloseContextMenuAddon(agent, contextMenuAddon); } catch { /* ignore */ }
+            try { CloseContextMenuAddon(agent, contextMenuAddon); }
+            catch
+            {
+                /* ignore */
+            }
             chosenText = "Already sorted";
             chosenIndex = -1;
             return true;
