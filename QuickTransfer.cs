@@ -1,39 +1,34 @@
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Runtime.InteropServices;
-using System.Text;
 using Dalamud.Configuration;
+using Dalamud.Game.Addon.Lifecycle;
+using Dalamud.Game.Addon.Lifecycle.AddonArgTypes;
+using Dalamud.Game.Chat;
 using Dalamud.Game.ClientState.Keys;
-using Dalamud.Game.Command;
 using Dalamud.Game.Gui.ContextMenu;
+using Dalamud.Game.NativeWrapper;
 using Dalamud.Hooking;
 using Dalamud.Interface.Windowing;
 using Dalamud.IoC;
 using Dalamud.Plugin;
 using Dalamud.Plugin.Services;
-using Dalamud.Utility.Signatures;
-using Dalamud.Game.Addon.Lifecycle;
-using Dalamud.Game.Addon.Lifecycle.AddonArgTypes;
-using Dalamud.Game.Text;
-using Dalamud.Game.Text.SeStringHandling;
 using FFXIVClientStructs.FFXIV.Client.Game;
+using FFXIVClientStructs.FFXIV.Client.System.String;
 using FFXIVClientStructs.FFXIV.Client.UI;
 using FFXIVClientStructs.FFXIV.Client.UI.Agent;
 using FFXIVClientStructs.FFXIV.Component.GUI;
-using Lumina.Excel.Sheets;
-using AtkValueType = FFXIVClientStructs.FFXIV.Component.GUI.ValueType;
+using InteropGenerator.Runtime;
+using System.Diagnostics;
+using System.Runtime.InteropServices;
+using System.Text;
+using AtkValueType = FFXIVClientStructs.FFXIV.Component.GUI.AtkValueType;
 
 namespace QuickTransfer;
 
 [Serializable]
 public sealed class Configuration : IPluginConfiguration
 {
-    public int Version { get; set; } = 3;
-
     public bool Enabled { get; set; } = true;
     // Default OFF (explicitly requested).
-    public bool DebugMode { get; set; } = false;
+    public bool DebugMode { get; set; }
     public int TransferCooldownMs { get; set; } = 200;
 
     public bool EnableMiddleClickSort { get; set; } = true;
@@ -45,12 +40,282 @@ public sealed class Configuration : IPluginConfiguration
 
     public bool EnableVendorQuickSell { get; set; } = true;
     public bool AutoConfirmVendorSell { get; set; } = true;
+    public int Version { get; set; } = 3;
 
     public void Save() => Plugin.PluginInterface.SavePluginConfig(this);
 }
 
 public sealed unsafe class Plugin : IDalamudPlugin
 {
+    private const string CommandName = "/qt";
+    private const int WideAddonSearchMaxIndex = 50;
+
+    // Heuristic: ignore "pointers" that look like 32-bit values.
+    // Real UI heap pointers in a 64-bit process are typically well above 4GB.
+    private const long MinLikelyPointer = 0x1_0000_0000; // 4GB
+
+    private const string FreeCompanyChestAddonName = "FreeCompanyChest";
+    private const string InputNumericAddonName = "InputNumeric";
+    private const string ContextMenuAddonName = "ContextMenu";
+    private const string SelectYesnoAddonName = "SelectYesno";
+
+    // ArmouryBoardIndexToType moved to DragDropHelpers.cs
+
+    private static readonly InventoryType[] PlayerInventoryTypes =
+    [
+        InventoryType.Inventory1,
+        InventoryType.Inventory2,
+        InventoryType.Inventory3,
+        InventoryType.Inventory4
+    ];
+
+    private static readonly InventoryType[] SaddlebagInventoryTypes =
+    [
+        InventoryType.SaddleBag1,
+        InventoryType.SaddleBag2,
+        InventoryType.PremiumSaddleBag1,
+        InventoryType.PremiumSaddleBag2
+    ];
+
+    private static readonly InventoryType[] RetainerInventoryTypes =
+    [
+        InventoryType.RetainerPage1,
+        InventoryType.RetainerPage2,
+        InventoryType.RetainerPage3,
+        InventoryType.RetainerPage4,
+        InventoryType.RetainerPage5,
+        InventoryType.RetainerPage6,
+        InventoryType.RetainerPage7
+    ];
+
+    private static readonly string[] ArmouryAddonNames =
+    [
+        // Common internal names used by the Armoury Chest window across patches.
+        "ArmouryBoard",
+        "ArmoryBoard",
+        "Armoury",
+        "Armory",
+        "ArmouryChest",
+        "ArmoryChest"
+    ];
+
+    private static readonly string[] ReceiveEventAddonNames =
+    [
+        // Player inventory
+        "Inventory",
+
+        // Saddlebags
+        "InventoryBuddy",
+        "InventoryBuddy2",
+
+        // Armoury chest (aliases vary by patch)
+        ..ArmouryAddonNames,
+
+        // Retainer inventory
+        "RetainerGrid0",
+        "RetainerSellList",
+        "RetainerGrid",
+
+        // Company chest
+        FreeCompanyChestAddonName
+    ];
+    private readonly Dictionary<int, Dictionary<int, InventoryType>> companyChestSelectedTabCandidates = new();
+    private readonly QuickTransferWindow configWindow;
+
+    // Cache a known-good (type, slot, a4) that successfully produced a populated inventory context menu for a given addon.
+    // This allows MMB to "Sort" even when hover payloads are weird/un-decodable, because Sort applies to the container.
+    private readonly Dictionary<uint, (InventoryType Type, int Slot, int A4)> lastGoodContextTargetByAddonId = new();
+
+    // Cache the "a4" parameter observed when the game opens inventory context menus.
+    // Some UIs (notably ArmouryBoard on some builds) appear to require a non-zero a4 to actually populate items.
+    private readonly Dictionary<(uint OwnerAddonId, uint InventoryType), int> observedContextA4 = new();
+
+    private readonly WindowSystem windowSystem = new("QuickTransfer");
+    private int companyChestBusyHits;
+    private long companyChestBusyUntilMs;
+
+    private CompanyChestDepositState companyChestDeposit;
+
+    private CompanyChestOrganizeState companyChestOrganize;
+    private int companyChestSelectedTabAtkValueIndex = -1;
+    private bool debugPrintedReceiveEventHook;
+
+    private long lastActionTickMs;
+    private long lastAltSeenMs;
+    private long lastCompanyChestOrganizeSkipLogMs;
+    private string lastCompanyChestOrganizeSkipReason = string.Empty;
+    private long lastCtrlSeenMs;
+    private long lastCursorHitTestLogMs;
+    private long lastFcChestTabUnmappedLogMs;
+    private (string AddonName, uint AddonId, long SeenAtMs)? lastHoverAddon;
+    private string lastHoverAddonName = string.Empty;
+    private (InventoryType Page, uint AddonId, long SeenAtMs)? lastHoverCompanyChestPage;
+    private (nint DdiPtr, uint AddonId, long SeenAtMs)? lastHoverDdi;
+    private long lastMiddleClickSortMs;
+    private long lastObservedA4LogMs;
+    private long lastReceiveEventDebugLogMs;
+    private (InventoryType Page, uint AddonId, long SeenAtMs)? lastSelectedCompanyChestPage;
+
+    private long lastShiftSeenMs;
+    private bool lastVkLButtonDown;
+    private bool lastVkMButtonDown;
+    private bool lastVkRButtonDown;
+    private bool lastVkX1ButtonDown;
+    private bool lastVkX2ButtonDown;
+
+    // Inventory/armoury uses this; saddlebags often do not, so we also use IContextMenu fallback.
+    // Use ClientStructs delegate for better compatibility (per Discord feedback).
+    private Hook<AgentInventoryContext.Delegates.OpenForItemSlot>? openForItemSlotHook;
+    private long pendingCloseContextMenuAtMs;
+    private bool pendingCompanyChestNumericArmed;
+    private int pendingCompanyChestNumericConfirmAttempts;
+
+    private long pendingCompanyChestNumericConfirmUntilMs;
+    private uint pendingCompanyChestNumericDesired;
+    private bool pendingCompanyChestNumericHalf;
+    private bool pendingCompanyChestNumericValueSet;
+    private long pendingCompanyChestNumericValueSetAtMs;
+    private (string AddonName, long EnqueuedAtMs, ModifierMode Mode)? pendingDeferredDefaultMenu;
+    private (nint AgentPtr, nint AddonPtr, long EnqueuedAtMs, ModifierMode Mode)? pendingDeferredMenuClick;
+    private (nint AgentPtr, nint AddonPtr, long EnqueuedAtMs)? pendingDeferredSortMenuClick;
+    private (InventoryType Type, int Slot, uint AddonId, long EnqueuedAtMs)? pendingMiddleClickSortRequest;
+    private long pendingMiddleClickSortUntilMs;
+    private nint pendingMoveAtkValuesPtr;
+    private long pendingMoveCreatedAtMs;
+    private long pendingMoveOutValueFreeAtMs;
+
+    // For stack moves that open InputNumeric, the native operation state must stay alive.
+    // If it's stack-allocated, the resulting InputNumeric buttons can become "dead".
+    private nint pendingMoveOutValuePtr;
+    private bool pendingMoveSawInputNumeric;
+    private PendingNumericKind pendingNumericKind;
+
+    // Extra safety for inventory Split dialogs (InventoryExpansion / non-English prompts):
+    // When we arm a Split, record the expected "max" value (usually qty-1).
+    // Then we can recognize the correct InputNumeric without relying on prompt text.
+    private uint pendingSplitExpectedMax;
+    private long pendingSplitExpectedUntilMs;
+
+    // IMPORTANT:
+    // We suppress by forcing alpha to 0 in PreDraw, which can "stick" because the same addon instance is reused.
+    // Therefore we track suppression windows and also restore alpha when not suppressing.
+    private long suppressContextMenuUntilMs;
+    private long suppressInputNumericUntilMs;
+
+    public Plugin()
+    {
+        Configuration = PluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
+
+        // Config migration: ensure DebugMode defaults to OFF even for existing installs.
+        try
+        {
+            if (Configuration.Version < 3)
+            {
+                Configuration.DebugMode = false;
+                Configuration.Version = 3;
+                Configuration.Save();
+            }
+            else if (Configuration.Version > 3)
+            {
+                // If the user downgrades, don't overwrite their config; just keep their stored values.
+            }
+            // Version == 3: still ensure debug isn't accidentally on by default after updates.
+            // (User can re-enable it explicitly.)
+            // No auto-save here to avoid writing config every startup.
+        }
+        catch
+        {
+            // ignore
+        }
+
+        configWindow = new(Configuration);
+        windowSystem.AddWindow(configWindow);
+
+        CommandManager.AddHandler(CommandName, new(OnCommand)
+        {
+            HelpMessage = "Open QuickTransfer settings"
+        });
+
+        PluginInterface.UiBuilder.Draw += windowSystem.Draw;
+        PluginInterface.UiBuilder.OpenConfigUi += OpenConfigUi;
+        PluginInterface.UiBuilder.OpenMainUi += OpenConfigUi;
+
+        InteropProvider.InitializeFromAttributes(this);
+
+        // Hook using ClientStructs delegate (per Discord feedback for better compatibility)
+        try
+        {
+            // AgentInventoryContext.Delegates.OpenForItemSlot is the delegate type
+            // We need to get the function pointer from MemberFunctionPointers to hook it
+            delegate* unmanaged<AgentInventoryContext*, InventoryType, int, int, uint, void> funcPtr = AgentInventoryContext.MemberFunctionPointers.OpenForItemSlot;
+            if (funcPtr != null)
+            {
+                openForItemSlotHook = InteropProvider.HookFromAddress<AgentInventoryContext.Delegates.OpenForItemSlot>(
+                    (nint)funcPtr,
+                    OpenForItemSlotDetour);
+                openForItemSlotHook?.Enable();
+            }
+            else
+            {
+                Log.Warning("[QuickTransfer] AgentInventoryContext.MemberFunctionPointers.OpenForItemSlot is null - signature may not be resolved");
+            }
+        }
+        catch(Exception ex)
+        {
+            Log.Warning(ex, "[QuickTransfer] Failed to hook OpenForItemSlot using ClientStructs delegate - falling back to manual signature");
+            // Fallback: try manual signature hook
+            try
+            {
+                openForItemSlotHook = InteropProvider.HookFromSignature<AgentInventoryContext.Delegates.OpenForItemSlot>(
+                    "83 B9 ?? ?? ?? ?? ?? 7E ?? 39 91",
+                    OpenForItemSlotDetour);
+                openForItemSlotHook?.Enable();
+            }
+            catch(Exception ex2)
+            {
+                Log.Error(ex2, "[QuickTransfer] Failed to hook OpenForItemSlot with fallback signature");
+            }
+        }
+
+        // Saddlebags can bypass OpenForItemSlot, so use a safe deferred click via context menu events.
+        ContextMenu.OnMenuOpened += OnContextMenuOpened;
+        Framework.Update += OnFrameworkUpdate;
+
+        // Lifecycle hooks:
+        // Register with explicit addon names; wildcard registration is not reliable across Dalamud versions/builds.
+        AddonLifecycle.RegisterListener(AddonEvent.PreSetup, InputNumericAddonName, OnInputNumericPreSetup);
+        AddonLifecycle.RegisterListener(AddonEvent.PreDraw, ContextMenuAddonName, OnAddonPreDraw);
+        AddonLifecycle.RegisterListener(AddonEvent.PreDraw, InputNumericAddonName, OnAddonPreDraw);
+        foreach(string name in ReceiveEventAddonNames)
+            AddonLifecycle.RegisterListener(AddonEvent.PreReceiveEvent, name, OnAddonReceiveEvent);
+
+        // Listen for system error messages (e.g. "Another player is using the chest") so we can stop FC chest organize/deposit
+        // instead of spamming actions.
+        ChatGui.ChatMessage += OnChatMessage;
+
+        Log.Information($"Loaded {PluginInterface.Manifest.Name}.");
+        Log.Information(
+            $"[QuickTransfer] DebugMode={Configuration.DebugMode}, Enabled={Configuration.Enabled}, " +
+            $"EnableMiddleClickSort={Configuration.EnableMiddleClickSort}, " +
+            $"EnableCompanyChest={Configuration.EnableCompanyChest}, " +
+            $"EnableCompanyChestMiddleClickOrganize={Configuration.EnableCompanyChestMiddleClickOrganize}");
+        if (Configuration.DebugMode)
+        {
+            try
+            {
+                string[] matches = Enum.GetNames<InventoryType>()
+                    .Where(n => n.Contains("FreeCompany", StringComparison.OrdinalIgnoreCase) ||
+                                n.Contains("Company", StringComparison.OrdinalIgnoreCase) ||
+                                n.Contains("Chest", StringComparison.OrdinalIgnoreCase))
+                    .ToArray();
+                Log.Information($"[QuickTransfer] InventoryType names containing Company/Chest: {string.Join(", ", matches)}");
+            }
+            catch(Exception ex)
+            {
+                Log.Warning(ex, "[QuickTransfer] Failed to enumerate InventoryType names (debug).");
+            }
+        }
+    }
     [PluginService] internal static IDalamudPluginInterface PluginInterface { get; private set; } = null!;
     [PluginService] internal static ICommandManager CommandManager { get; private set; } = null!;
     [PluginService] internal static IPluginLog Log { get; private set; } = null!;
@@ -63,100 +328,41 @@ public sealed unsafe class Plugin : IDalamudPlugin
     [PluginService] internal static IAddonLifecycle AddonLifecycle { get; private set; } = null!;
     [PluginService] internal static IChatGui ChatGui { get; private set; } = null!;
 
-    private const string CommandName = "/qt";
-
     public Configuration Configuration { get; }
 
-    private readonly WindowSystem windowSystem = new("QuickTransfer");
-    private readonly QuickTransferWindow configWindow;
+    public void Dispose()
+    {
+        Framework.Update -= OnFrameworkUpdate;
+        ContextMenu.OnMenuOpened -= OnContextMenuOpened;
+        ChatGui.ChatMessage -= OnChatMessage;
+        AddonLifecycle.UnregisterListener(AddonEvent.PreSetup, InputNumericAddonName, OnInputNumericPreSetup);
+        AddonLifecycle.UnregisterListener(AddonEvent.PreDraw, ContextMenuAddonName, OnAddonPreDraw);
+        AddonLifecycle.UnregisterListener(AddonEvent.PreDraw, InputNumericAddonName, OnAddonPreDraw);
+        foreach(string name in ReceiveEventAddonNames)
+            AddonLifecycle.UnregisterListener(AddonEvent.PreReceiveEvent, name, OnAddonReceiveEvent);
 
-    private long lastActionTickMs;
-    private (nint AgentPtr, nint AddonPtr, long EnqueuedAtMs, ModifierMode Mode)? pendingDeferredMenuClick;
-    private (string AddonName, long EnqueuedAtMs, ModifierMode Mode)? pendingDeferredDefaultMenu;
-    private (nint AgentPtr, nint AddonPtr, long EnqueuedAtMs)? pendingDeferredSortMenuClick;
-    private long pendingMiddleClickSortUntilMs;
-    private (InventoryType Type, int Slot, uint AddonId, long EnqueuedAtMs)? pendingMiddleClickSortRequest;
-    private long lastMiddleClickSortMs;
-    private long lastReceiveEventDebugLogMs;
-    private long lastFcChestTabUnmappedLogMs;
-    private bool debugPrintedReceiveEventHook;
-    private (nint DdiPtr, uint AddonId, long SeenAtMs)? lastHoverDdi;
-    private string lastHoverAddonName = string.Empty;
-    private (string AddonName, uint AddonId, long SeenAtMs)? lastHoverAddon;
-    private (InventoryType Page, uint AddonId, long SeenAtMs)? lastHoverCompanyChestPage;
-    private (InventoryType Page, uint AddonId, long SeenAtMs)? lastSelectedCompanyChestPage;
-    private int companyChestSelectedTabAtkValueIndex = -1;
-    private readonly Dictionary<int, Dictionary<int, InventoryType>> companyChestSelectedTabCandidates = new();
-    private long companyChestBusyUntilMs;
-    private int companyChestBusyHits;
-    private long lastCompanyChestOrganizeSkipLogMs;
-    private string lastCompanyChestOrganizeSkipReason = string.Empty;
-    private bool lastVkLButtonDown;
-    private bool lastVkRButtonDown;
-    private bool lastVkMButtonDown;
-    private bool lastVkX1ButtonDown;
-    private bool lastVkX2ButtonDown;
-    private long lastCursorHitTestLogMs;
-    private const int WideAddonSearchMaxIndex = 50;
+        openForItemSlotHook?.Disable();
+        openForItemSlotHook?.Dispose();
 
-    // Cache the "a4" parameter observed when the game opens inventory context menus.
-    // Some UIs (notably ArmouryBoard on some builds) appear to require a non-zero a4 to actually populate items.
-    private readonly Dictionary<(uint OwnerAddonId, uint InventoryType), int> observedContextA4 = new();
-    private long lastObservedA4LogMs;
+        PluginInterface.UiBuilder.Draw -= windowSystem.Draw;
+        PluginInterface.UiBuilder.OpenConfigUi -= OpenConfigUi;
+        PluginInterface.UiBuilder.OpenMainUi -= OpenConfigUi;
 
-    // Cache a known-good (type, slot, a4) that successfully produced a populated inventory context menu for a given addon.
-    // This allows MMB to "Sort" even when hover payloads are weird/un-decodable, because Sort applies to the container.
-    private readonly Dictionary<uint, (InventoryType Type, int Slot, int A4)> lastGoodContextTargetByAddonId = new();
+        windowSystem.RemoveAllWindows();
+        configWindow.Dispose();
+
+        CommandManager.RemoveHandler(CommandName);
+    }
 
     // Win32: reliable mouse button state (works even when Dalamud KeyState doesn't report mouse buttons).
     [DllImport("user32.dll")]
     private static extern short GetAsyncKeyState(int vKey);
 
     [DllImport("user32.dll")]
-    private static extern bool GetCursorPos(out POINT lpPoint);
+    private static extern bool GetCursorPos(out Point lpPoint);
 
     [DllImport("user32.dll")]
-    private static extern bool ScreenToClient(IntPtr hWnd, ref POINT lpPoint);
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct POINT
-    {
-        public int X;
-        public int Y;
-    }
-
-    // Heuristic: ignore "pointers" that look like 32-bit values.
-    // Real UI heap pointers in a 64-bit process are typically well above 4GB.
-    private const long MinLikelyPointer = 0x1_0000_0000; // 4GB
-
-    // ArmouryBoardIndexToType moved to DragDropHelpers.cs
-
-    private static readonly InventoryType[] PlayerInventoryTypes =
-    [
-        InventoryType.Inventory1,
-        InventoryType.Inventory2,
-        InventoryType.Inventory3,
-        InventoryType.Inventory4,
-    ];
-
-    private static readonly InventoryType[] SaddlebagInventoryTypes =
-    [
-        InventoryType.SaddleBag1,
-        InventoryType.SaddleBag2,
-        InventoryType.PremiumSaddleBag1,
-        InventoryType.PremiumSaddleBag2,
-    ];
-
-    private static readonly InventoryType[] RetainerInventoryTypes =
-    [
-        InventoryType.RetainerPage1,
-        InventoryType.RetainerPage2,
-        InventoryType.RetainerPage3,
-        InventoryType.RetainerPage4,
-        InventoryType.RetainerPage5,
-        InventoryType.RetainerPage6,
-        InventoryType.RetainerPage7,
-    ];
+    private static extern bool ScreenToClient(nint hWnd, ref Point lpPoint);
 
     private static bool IsVkDown(int vKey)
     {
@@ -176,11 +382,11 @@ public sealed unsafe class Plugin : IDalamudPlugin
         y = 0;
         try
         {
-            if (!GetCursorPos(out var p))
+            if (!GetCursorPos(out Point p))
                 return false;
 
-            var hwnd = System.Diagnostics.Process.GetCurrentProcess().MainWindowHandle;
-            if (hwnd == IntPtr.Zero)
+            nint hwnd = Process.GetCurrentProcess().MainWindowHandle;
+            if (hwnd == nint.Zero)
                 return false;
 
             if (!ScreenToClient(hwnd, ref p))
@@ -203,11 +409,11 @@ public sealed unsafe class Plugin : IDalamudPlugin
     {
         try
         {
-            var stage = AtkStage.Instance();
+            AtkStage* stage = AtkStage.Instance();
             if (stage == null || stage->AtkCollisionManager == null)
                 return false;
 
-            var hit = stage->AtkCollisionManager->IntersectingAddon;
+            AtkUnitBase* hit = stage->AtkCollisionManager->IntersectingAddon;
             if (hit == null || hit->Id == 0)
                 return false;
 
@@ -221,7 +427,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
                 id = 0;
                 try
                 {
-                    if (TryGetVisibleAddon(name, out var a, WideAddonSearchMaxIndex) && a != null && a->Id != 0)
+                    if (TryGetVisibleAddon(name, out AtkUnitBase* a, WideAddonSearchMaxIndex) && a != null && a->Id != 0)
                     {
                         id = a->Id;
                         return true;
@@ -235,15 +441,14 @@ public sealed unsafe class Plugin : IDalamudPlugin
                 return false;
             }
 
-            var visibleById = new Dictionary<uint, string>(capacity: 16);
+            Dictionary<uint, string> visibleById = new(capacity: 16);
             void AddVisible(string name)
             {
-                if (TryGetVisibleAddonId(name, out var id) && id != 0)
+                if (TryGetVisibleAddonId(name, out uint id) && id != 0)
                 {
                     // Don't overwrite an existing mapping. This prevents rare mis-labeling if an alias query
                     // accidentally returns an unexpected addon that reuses an id already mapped earlier.
-                    if (!visibleById.ContainsKey(id))
-                        visibleById[id] = name;
+                    visibleById.TryAdd(id, name);
                 }
             }
 
@@ -254,12 +459,12 @@ public sealed unsafe class Plugin : IDalamudPlugin
             AddVisible("RetainerGrid");
             AddVisible("RetainerSellList");
             AddVisible(FreeCompanyChestAddonName);
-            foreach (var n in ArmouryAddonNames)
+            foreach(string n in ArmouryAddonNames)
                 AddVisible(n);
 
-            var hitId = (uint)hit->Id;
-            var hostId = (uint)hit->HostId;
-            var parentId = (uint)hit->ParentId;
+            uint hitId = hit->Id;
+            uint hostId = hit->HostId;
+            uint parentId = hit->ParentId;
 
             uint ownerId = 0;
             string ownerName = string.Empty;
@@ -269,7 +474,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
             {
                 if (id == 0)
                     return false;
-                if (!visibleById.TryGetValue(id, out var n))
+                if (!visibleById.TryGetValue(id, out string? n))
                     return false;
                 ownerId = id;
                 ownerName = n;
@@ -299,10 +504,10 @@ public sealed unsafe class Plugin : IDalamudPlugin
                 {
                     if (id == 0)
                         return false;
-                    if (!lastGoodContextTargetByAddonId.TryGetValue(id, out var good))
+                    if (!lastGoodContextTargetByAddonId.TryGetValue(id, out (InventoryType Type, int Slot, int A4) good))
                         return false;
 
-                    var inferred = InferOwnerNameFromInvType(good.Type);
+                    string inferred = InferOwnerNameFromInvType(good.Type);
                     if (string.IsNullOrEmpty(inferred))
                         return false;
 
@@ -361,7 +566,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
             if (TryUpdateLastHoverAddonFromCollisionManager(now))
                 return true;
 
-            if (!TryGetClientCursorPos(out var x, out var y))
+            if (!TryGetClientCursorPos(out short x, out short y))
                 return false;
 
             AtkUnitBase* best = null;
@@ -370,7 +575,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
             uint bestDepth = 0;
             ushort bestDraw = 0;
 
-            void Consider(string name, AtkUnitBase* a)
+            void Consider(string? name, AtkUnitBase* a)
             {
                 if (a == null)
                     return;
@@ -383,8 +588,8 @@ public sealed unsafe class Plugin : IDalamudPlugin
                     if (!a->CheckWindowCollisionAtCoords(x, y))
                         return;
 
-                    var depth = a->DepthLayer;
-                    var draw = a->DrawOrderIndex;
+                    uint depth = a->DepthLayer;
+                    ushort draw = a->DrawOrderIndex;
                     if (best == null || depth > bestDepth || (depth == bestDepth && draw > bestDraw))
                     {
                         best = a;
@@ -400,27 +605,27 @@ public sealed unsafe class Plugin : IDalamudPlugin
                 }
             }
 
-            if (TryGetVisibleAddon("Inventory", out var inv) && inv != null)
+            if (TryGetVisibleAddon("Inventory", out AtkUnitBase* inv) && inv != null)
                 Consider("Inventory", inv);
 
-            if (TryGetVisibleAddon("InventoryBuddy", out var sb) && sb != null)
+            if (TryGetVisibleAddon("InventoryBuddy", out AtkUnitBase* sb) && sb != null)
                 Consider("InventoryBuddy", sb);
-            if (TryGetVisibleAddon("InventoryBuddy2", out var sb2) && sb2 != null)
+            if (TryGetVisibleAddon("InventoryBuddy2", out AtkUnitBase* sb2) && sb2 != null)
                 Consider("InventoryBuddy2", sb2);
 
-            if (TryGetVisibleAddon("RetainerGrid0", out var rg0, WideAddonSearchMaxIndex) && rg0 != null)
+            if (TryGetVisibleAddon("RetainerGrid0", out AtkUnitBase* rg0, WideAddonSearchMaxIndex) && rg0 != null)
                 Consider("RetainerGrid0", rg0);
-            if (TryGetVisibleAddon("RetainerGrid", out var rg, WideAddonSearchMaxIndex) && rg != null)
+            if (TryGetVisibleAddon("RetainerGrid", out AtkUnitBase* rg, WideAddonSearchMaxIndex) && rg != null)
                 Consider("RetainerGrid", rg);
-            if (TryGetVisibleAddon("RetainerSellList", out var rsl, WideAddonSearchMaxIndex) && rsl != null)
+            if (TryGetVisibleAddon("RetainerSellList", out AtkUnitBase* rsl, WideAddonSearchMaxIndex) && rsl != null)
                 Consider("RetainerSellList", rsl);
 
-            if (TryGetVisibleAddon(FreeCompanyChestAddonName, out var fcc, WideAddonSearchMaxIndex) && fcc != null)
+            if (TryGetVisibleAddon(FreeCompanyChestAddonName, out AtkUnitBase* fcc, WideAddonSearchMaxIndex) && fcc != null)
                 Consider(FreeCompanyChestAddonName, fcc);
 
-            foreach (var n in ArmouryAddonNames)
+            foreach(string n in ArmouryAddonNames)
             {
-                if (TryGetVisibleAddon(n, out var ab) && ab != null)
+                if (TryGetVisibleAddon(n, out AtkUnitBase* ab) && ab != null)
                     Consider(n, ab);
             }
 
@@ -459,17 +664,6 @@ public sealed unsafe class Plugin : IDalamudPlugin
         out int slot)
         => DragDropHelpers.TryGetSlotFromDragDropInterface(ddi, out invType, out slot);
 
-    private static bool TryGetSlotFromDragDropInterfaceForAddon(
-        AtkDragDropInterface* ddi,
-        string addonName,
-        uint addonId,
-        out InventoryType invType,
-        out int slot,
-        out int rawInt1,
-        out int rawInt2,
-        out uint rawFlags)
-        => DragDropHelpers.TryGetSlotFromDragDropInterfaceForAddon(ddi, addonName, addonId, out invType, out slot, out rawInt1, out rawInt2, out rawFlags);
-
     private static int PickContextMenuSlot(InventoryType type, int preferredSlot)
         => DragDropHelpers.PickContextMenuSlot(type, preferredSlot);
 
@@ -489,21 +683,21 @@ public sealed unsafe class Plugin : IDalamudPlugin
             if (containers.Length == 0)
                 return false;
 
-            var inv = InventoryManager.Instance();
+            InventoryManager* inv = InventoryManager.Instance();
             if (inv == null)
                 return false;
 
             // Try a few plausible slot candidates first (fast path).
             // Observed weird payloads often still include a real slot index in one of these fields.
-            var candidates = new List<int>(capacity: 4) { rawInt2, rawInt1, refIdx };
-            foreach (var s in candidates.Distinct())
+            List<int> candidates = new(capacity: 4) { rawInt2, rawInt1, refIdx };
+            foreach(int s in candidates.Distinct())
             {
                 if (s < 0 || s > 500)
                     continue;
 
-                foreach (var t in containers)
+                foreach(InventoryType t in containers)
                 {
-                    var it = inv->GetInventorySlot(t, s);
+                    InventoryItem* it = inv->GetInventorySlot(t, s);
                     if (it != null && it->ItemId != 0)
                     {
                         type = t;
@@ -515,15 +709,15 @@ public sealed unsafe class Plugin : IDalamudPlugin
 
             // Last resort: pick the first container that has any items,
             // and then pick its first non-empty slot.
-            foreach (var t in containers)
+            foreach(InventoryType t in containers)
             {
-                var c = inv->GetInventoryContainer(t);
+                InventoryContainer* c = inv->GetInventoryContainer(t);
                 if (c == null || !c->IsLoaded || c->Size <= 0)
                     continue;
 
-                for (var i = 0; i < c->Size; i++)
+                for(int i = 0; i < c->Size; i++)
                 {
-                    var it = c->GetInventorySlot(i);
+                    InventoryItem* it = c->GetInventorySlot(i);
                     if (it != null && it->ItemId != 0)
                     {
                         type = t;
@@ -547,16 +741,16 @@ public sealed unsafe class Plugin : IDalamudPlugin
         {
             // If multiple inventory windows are open, we can't know which one the cursor is over without a hover DDI.
             // In that case, refuse and require hover capture.
-            var visibleCount = 0;
+            int visibleCount = 0;
 
             InventoryType chosenType = default;
-            var chosenSlot = -1;
+            int chosenSlot = -1;
             uint chosenAddonId = 0;
 
             // ArmouryBoard
-            if (TryGetVisibleAddon("ArmouryBoard", out var ab, WideAddonSearchMaxIndex) && ab != null)
+            if (TryGetVisibleAddon("ArmouryBoard", out AtkUnitBase* ab, WideAddonSearchMaxIndex) && ab != null)
             {
-                if (TryResolveTargetFromWeirdPayload(DragDropHelpers.ArmouryBoardIndexToType, -1, -1, -1, out var t, out var s))
+                if (TryResolveTargetFromWeirdPayload(DragDropHelpers.ArmouryBoardIndexToType, -1, -1, -1, out InventoryType t, out int s))
                 {
                     visibleCount++;
                     chosenType = t;
@@ -566,9 +760,9 @@ public sealed unsafe class Plugin : IDalamudPlugin
             }
 
             // Saddlebags
-            if (TryGetVisibleAddon("InventoryBuddy", out var sb, WideAddonSearchMaxIndex) && sb != null)
+            if (TryGetVisibleAddon("InventoryBuddy", out AtkUnitBase* sb, WideAddonSearchMaxIndex) && sb != null)
             {
-                if (TryResolveTargetFromWeirdPayload(SaddlebagInventoryTypes, -1, -1, -1, out var t, out var s))
+                if (TryResolveTargetFromWeirdPayload(SaddlebagInventoryTypes, -1, -1, -1, out InventoryType t, out int s))
                 {
                     visibleCount++;
                     chosenType = t;
@@ -576,9 +770,9 @@ public sealed unsafe class Plugin : IDalamudPlugin
                     chosenAddonId = sb->Id;
                 }
             }
-            else if (TryGetVisibleAddon("InventoryBuddy2", out var sb2, WideAddonSearchMaxIndex) && sb2 != null)
+            else if (TryGetVisibleAddon("InventoryBuddy2", out AtkUnitBase* sb2, WideAddonSearchMaxIndex) && sb2 != null)
             {
-                if (TryResolveTargetFromWeirdPayload(SaddlebagInventoryTypes, -1, -1, -1, out var t, out var s))
+                if (TryResolveTargetFromWeirdPayload(SaddlebagInventoryTypes, -1, -1, -1, out InventoryType t, out int s))
                 {
                     visibleCount++;
                     chosenType = t;
@@ -588,9 +782,9 @@ public sealed unsafe class Plugin : IDalamudPlugin
             }
 
             // Player inventory
-            if (TryGetVisibleAddon("Inventory", out var inv, WideAddonSearchMaxIndex) && inv != null)
+            if (TryGetVisibleAddon("Inventory", out AtkUnitBase* inv, WideAddonSearchMaxIndex) && inv != null)
             {
-                if (TryResolveTargetFromWeirdPayload(PlayerInventoryTypes, -1, -1, -1, out var t, out var s))
+                if (TryResolveTargetFromWeirdPayload(PlayerInventoryTypes, -1, -1, -1, out InventoryType t, out int s))
                 {
                     visibleCount++;
                     chosenType = t;
@@ -600,9 +794,9 @@ public sealed unsafe class Plugin : IDalamudPlugin
             }
 
             // Retainer inventory
-            if (TryGetVisibleAddon("RetainerGrid0", out var rg0, WideAddonSearchMaxIndex) && rg0 != null)
+            if (TryGetVisibleAddon("RetainerGrid0", out AtkUnitBase* rg0, WideAddonSearchMaxIndex) && rg0 != null)
             {
-                if (TryResolveTargetFromWeirdPayload(RetainerInventoryTypes, -1, -1, -1, out var t, out var s))
+                if (TryResolveTargetFromWeirdPayload(RetainerInventoryTypes, -1, -1, -1, out InventoryType t, out int s))
                 {
                     visibleCount++;
                     chosenType = t;
@@ -610,9 +804,9 @@ public sealed unsafe class Plugin : IDalamudPlugin
                     chosenAddonId = rg0->Id;
                 }
             }
-            else if (TryGetVisibleAddon("RetainerGrid", out var rg, WideAddonSearchMaxIndex) && rg != null)
+            else if (TryGetVisibleAddon("RetainerGrid", out AtkUnitBase* rg, WideAddonSearchMaxIndex) && rg != null)
             {
-                if (TryResolveTargetFromWeirdPayload(RetainerInventoryTypes, -1, -1, -1, out var t, out var s))
+                if (TryResolveTargetFromWeirdPayload(RetainerInventoryTypes, -1, -1, -1, out InventoryType t, out int s))
                 {
                     visibleCount++;
                     chosenType = t;
@@ -620,9 +814,9 @@ public sealed unsafe class Plugin : IDalamudPlugin
                     chosenAddonId = rg->Id;
                 }
             }
-            else if (TryGetVisibleAddon("RetainerSellList", out var rsl, WideAddonSearchMaxIndex) && rsl != null)
+            else if (TryGetVisibleAddon("RetainerSellList", out AtkUnitBase* rsl, WideAddonSearchMaxIndex) && rsl != null)
             {
-                if (TryResolveTargetFromWeirdPayload(RetainerInventoryTypes, -1, -1, -1, out var t, out var s))
+                if (TryResolveTargetFromWeirdPayload(RetainerInventoryTypes, -1, -1, -1, out InventoryType t, out int s))
                 {
                     visibleCount++;
                     chosenType = t;
@@ -632,9 +826,9 @@ public sealed unsafe class Plugin : IDalamudPlugin
             }
 
             // Free Company Chest (no native Sort context menu; MMB triggers our organize pass)
-            if (TryGetVisibleAddon(FreeCompanyChestAddonName, out var fcc, WideAddonSearchMaxIndex) && fcc != null)
+            if (TryGetVisibleAddon(FreeCompanyChestAddonName, out AtkUnitBase* fcc, WideAddonSearchMaxIndex) && fcc != null)
             {
-                var lp = lastHoverCompanyChestPage;
+                (InventoryType Page, uint AddonId, long SeenAtMs)? lp = lastHoverCompanyChestPage;
                 if (lp != null && lp.Value.AddonId == fcc->Id && now - lp.Value.SeenAtMs <= 20000 && IsCompanyChestType(lp.Value.Page))
                 {
                     visibleCount++;
@@ -644,7 +838,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
                 }
                 else
                 {
-                    var sp = lastSelectedCompanyChestPage;
+                    (InventoryType Page, uint AddonId, long SeenAtMs)? sp = lastSelectedCompanyChestPage;
                     if (sp != null && sp.Value.AddonId == fcc->Id && now - sp.Value.SeenAtMs <= 20000 && IsCompanyChestType(sp.Value.Page))
                     {
                         visibleCount++;
@@ -654,14 +848,14 @@ public sealed unsafe class Plugin : IDalamudPlugin
                     }
                     else
                     {
-                    var pages = GetCompanyChestInventoryTypes();
-                    if (pages.Length > 0)
-                    {
-                        visibleCount++;
-                        chosenType = pages[0];
-                        chosenSlot = 0;
-                        chosenAddonId = fcc->Id;
-                    }
+                        InventoryType[] pages = GetCompanyChestInventoryTypes();
+                        if (pages.Length > 0)
+                        {
+                            visibleCount++;
+                            chosenType = pages[0];
+                            chosenSlot = 0;
+                            chosenAddonId = fcc->Id;
+                        }
                     }
                 }
             }
@@ -669,7 +863,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
             if (visibleCount != 1 || chosenAddonId == 0 || chosenSlot < 0)
                 return false;
 
-            var openSlot = PickContextMenuSlot(chosenType, chosenSlot);
+            int openSlot = PickContextMenuSlot(chosenType, chosenSlot);
             pendingMiddleClickSortRequest = (chosenType, openSlot, chosenAddonId, now);
             pendingMiddleClickSortUntilMs = now + 1500;
             lastMiddleClickSortMs = now;
@@ -689,12 +883,12 @@ public sealed unsafe class Plugin : IDalamudPlugin
     {
         try
         {
-            var h = lastHoverAddon;
+            (string AddonName, uint AddonId, long SeenAtMs)? h = lastHoverAddon;
             if (h == null || now - h.Value.SeenAtMs > 20000)
                 return false;
 
-            var addonName = h.Value.AddonName ?? string.Empty;
-            var addonId = h.Value.AddonId;
+            string addonName = h.Value.AddonName;
+            uint addonId = h.Value.AddonId;
 
             ReadOnlySpan<InventoryType> containers = default;
             if (addonName.Equals("Inventory", StringComparison.OrdinalIgnoreCase))
@@ -714,10 +908,10 @@ public sealed unsafe class Plugin : IDalamudPlugin
 
                 // First preference: read the currently displayed page directly from the addon via a payload probe.
                 // This avoids relying on tab ButtonClick params, which vary across clients/builds.
-                if (TryGetVisibleAddon(FreeCompanyChestAddonName, out var fcc, WideAddonSearchMaxIndex) &&
+                if (TryGetVisibleAddon(FreeCompanyChestAddonName, out AtkUnitBase* fcc, WideAddonSearchMaxIndex) &&
                     fcc != null &&
                     fcc->Id == addonId &&
-                    TryResolveCompanyChestPageFromAddon(fcc, out var curPage) &&
+                    TryResolveCompanyChestPageFromAddon(fcc, out InventoryType curPage) &&
                     IsCompanyChestType(curPage))
                 {
                     pendingMiddleClickSortRequest = (curPage, 0, addonId, now);
@@ -727,14 +921,14 @@ public sealed unsafe class Plugin : IDalamudPlugin
                         Log.Information($"[QuickTransfer] (MMB) Resolved active Company Chest tab from payload: {curPage} (addonId={addonId})");
                     return true;
                 }
-                else if (Configuration.DebugMode && TryGetVisibleAddon(FreeCompanyChestAddonName, out var fccDbg, WideAddonSearchMaxIndex) && fccDbg != null && fccDbg->Id == addonId)
+                if (Configuration.DebugMode && TryGetVisibleAddon(FreeCompanyChestAddonName, out AtkUnitBase* fccDbg, WideAddonSearchMaxIndex) && fccDbg != null && fccDbg->Id == addonId)
                 {
                     // Diagnostic: we expected to be able to infer the active page from visible payloads, but couldn't.
                     // This helps identify whether the probe is failing entirely or just returning a non-page payload.
                     Log.Information("[QuickTransfer] (MMB) Company Chest payload tab probe failed; falling back to hover/selected tab.");
                 }
 
-                var lp = lastHoverCompanyChestPage;
+                (InventoryType Page, uint AddonId, long SeenAtMs)? lp = lastHoverCompanyChestPage;
                 if (lp != null && lp.Value.AddonId == addonId && now - lp.Value.SeenAtMs <= companyChestTabMaxAgeMs && IsCompanyChestType(lp.Value.Page))
                 {
                     pendingMiddleClickSortRequest = (lp.Value.Page, 0, addonId, now);
@@ -745,7 +939,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
                     return true;
                 }
 
-                var sp = lastSelectedCompanyChestPage;
+                (InventoryType Page, uint AddonId, long SeenAtMs)? sp = lastSelectedCompanyChestPage;
                 if (sp != null && sp.Value.AddonId == addonId && now - sp.Value.SeenAtMs <= companyChestTabMaxAgeMs && IsCompanyChestType(sp.Value.Page))
                 {
                     pendingMiddleClickSortRequest = (sp.Value.Page, 0, addonId, now);
@@ -756,7 +950,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
                     return true;
                 }
 
-                if (TryResolveCompanyChestSelectedPageFromAtkValues(addonId, out var atkPage))
+                if (TryResolveCompanyChestSelectedPageFromAtkValues(addonId, out InventoryType atkPage))
                 {
                     pendingMiddleClickSortRequest = (atkPage, 0, addonId, now);
                     pendingMiddleClickSortUntilMs = now + 1500;
@@ -778,10 +972,10 @@ public sealed unsafe class Plugin : IDalamudPlugin
                 return false;
 
             // Prefer last known-good context target when available (more likely to produce a menu).
-            if (lastGoodContextTargetByAddonId.TryGetValue(addonId, out var good) &&
+            if (lastGoodContextTargetByAddonId.TryGetValue(addonId, out (InventoryType Type, int Slot, int A4) good) &&
                 (IsPlayerInventoryType(good.Type) || IsArmouryType(good.Type) || IsSaddlebagType(good.Type) || IsRetainerType(good.Type) || IsCompanyChestType(good.Type)))
             {
-                var openSlot = PickContextMenuSlot(good.Type, good.Slot);
+                int openSlot = PickContextMenuSlot(good.Type, good.Slot);
                 pendingMiddleClickSortRequest = (good.Type, openSlot, addonId, now);
                 pendingMiddleClickSortUntilMs = now + 1500;
                 lastMiddleClickSortMs = now;
@@ -790,10 +984,10 @@ public sealed unsafe class Plugin : IDalamudPlugin
                 return true;
             }
 
-            if (!TryResolveTargetFromWeirdPayload(containers, -1, -1, -1, out var type, out var slot))
+            if (!TryResolveTargetFromWeirdPayload(containers, -1, -1, -1, out InventoryType type, out int slot))
                 return false;
 
-            var openSlot2 = PickContextMenuSlot(type, slot);
+            int openSlot2 = PickContextMenuSlot(type, slot);
             pendingMiddleClickSortRequest = (type, openSlot2, addonId, now);
             pendingMiddleClickSortUntilMs = now + 1500;
             lastMiddleClickSortMs = now;
@@ -815,7 +1009,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
         if (now - lastMiddleClickSortMs < 250)
             return;
 
-        var hDdi = lastHoverDdi;
+        (nint DdiPtr, uint AddonId, long SeenAtMs)? hDdi = lastHoverDdi;
         // Rollover events only fire when moving the cursor; keep a generous window so MMB works while stationary.
         if (hDdi == null || now - hDdi.Value.SeenAtMs > 20000)
         {
@@ -835,7 +1029,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
 
         try
         {
-            var ddiAddonId = hDdi.Value.AddonId;
+            uint ddiAddonId = hDdi.Value.AddonId;
 
             // Key rule for stability across windows:
             // - A stored hover DDI can be stale if the UI doesn't emit MouseOut/RollOut events (common for Inventory/Saddlebags).
@@ -844,7 +1038,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
             //
             // Armoury remains stable because the collision manager typically also reports it correctly, and we no longer
             // let stale "lastHoverAddon" from other windows override a fresh cursor hit-test.
-            var ddiFresh = now - hDdi.Value.SeenAtMs <= 250;
+            bool ddiFresh = now - hDdi.Value.SeenAtMs <= 250;
             if (!ddiFresh)
             {
                 if (TryUpdateLastHoverAddonFromCursorHitTest(now) && TryQueueMiddleClickSortFromLastHoverAddon(now))
@@ -860,9 +1054,9 @@ public sealed unsafe class Plugin : IDalamudPlugin
             }
 
             // As a fallback, still allow using the last-good target for this addon id.
-            if (lastGoodContextTargetByAddonId.TryGetValue(ddiAddonId, out var good2))
+            if (lastGoodContextTargetByAddonId.TryGetValue(ddiAddonId, out (InventoryType Type, int Slot, int A4) good2))
             {
-                var openSlot = PickContextMenuSlot(good2.Type, good2.Slot);
+                int openSlot = PickContextMenuSlot(good2.Type, good2.Slot);
                 pendingMiddleClickSortRequest = (good2.Type, openSlot, ddiAddonId, now);
                 pendingMiddleClickSortUntilMs = now + 1500;
                 lastMiddleClickSortMs = now;
@@ -875,87 +1069,14 @@ public sealed unsafe class Plugin : IDalamudPlugin
             pendingMiddleClickSortUntilMs = now + 1500;
             lastMiddleClickSortMs = now;
         }
-        catch (Exception ex)
+        catch(Exception ex)
         {
             // Best-effort only; avoid crashing the client if the hovered pointer becomes invalid.
             Log.Warning(ex, "[QuickTransfer] (MMB) Failed to queue sort from hover dragdrop.");
         }
     }
 
-    private long pendingCompanyChestNumericConfirmUntilMs;
-    private int pendingCompanyChestNumericConfirmAttempts;
-    private long pendingCloseContextMenuAtMs;
-    private bool pendingCompanyChestNumericArmed;
-    private bool pendingCompanyChestNumericValueSet;
-    private long pendingCompanyChestNumericValueSetAtMs;
-    private uint pendingCompanyChestNumericDesired;
-    private bool pendingCompanyChestNumericHalf;
-
-    // Extra safety for inventory Split dialogs (InventoryExpansion / non-English prompts):
-    // When we arm a Split, record the expected "max" value (usually qty-1).
-    // Then we can recognize the correct InputNumeric without relying on prompt text.
-    private uint pendingSplitExpectedMax;
-    private long pendingSplitExpectedUntilMs;
-    private enum PendingNumericKind { None, Store, Remove, Move, Split, Trade, Sell }
-    private PendingNumericKind pendingNumericKind;
-
-    private long lastShiftSeenMs;
-    private long lastCtrlSeenMs;
-    private long lastAltSeenMs;
-
-    // For stack moves that open InputNumeric, the native operation state must stay alive.
-    // If it's stack-allocated, the resulting InputNumeric buttons can become "dead".
-    private nint pendingMoveOutValuePtr;
-    private long pendingMoveOutValueFreeAtMs;
-    private nint pendingMoveAtkValuesPtr;
-    private long pendingMoveCreatedAtMs;
-    private bool pendingMoveSawInputNumeric;
-    private static readonly Dictionary<uint, uint> StackSizeCache = new();
-    private static readonly Dictionary<uint, uint> ItemUiCategoryCache = new();
-
-    private struct CompanyChestDepositState
-    {
-        public bool Active;
-        public InventoryType SourceType;
-        public uint SourceSlot;
-        public uint ItemId;
-        public bool IsHq;
-        public long NextAttemptAtMs;
-        public long ExpiresAtMs;
-        public int Steps;
-        public uint LastQty;
-        public long WaitForQtyChangeUntilMs;
-    }
-
-    private CompanyChestDepositState companyChestDeposit;
-
-    private struct CompanyChestOrganizeState
-    {
-        public bool Active;
-        public uint OwnerAddonId;
-        public long NextAttemptAtMs;
-        public long ExpiresAtMs;
-        public int Steps;
-        public int Phase; // 0=stack, 1=compact
-        public InventoryType[] Pages;
-
-        // Throttle: wait for the last move to apply before issuing another.
-        public bool WaitingForApply;
-        public InventoryType WaitSrcType;
-        public uint WaitSrcSlot;
-        public uint WaitSrcItemId;
-        public int WaitSrcQty;
-        public InventoryType WaitDstType;
-        public uint WaitDstSlot;
-        public uint WaitDstItemId;
-        public int WaitDstQty;
-        public long WaitUntilMs;
-        public int WaitStuckCount;
-        public long WaitObservedChangeAtMs;
-    }
-
-    private static bool TryGetSlotSnapshot(
-        InventoryManager* inv,
+    private static void TryGetSlotSnapshot(InventoryManager* inv,
         InventoryType type,
         uint slot,
         out uint itemId,
@@ -966,17 +1087,16 @@ public sealed unsafe class Plugin : IDalamudPlugin
         try
         {
             if (inv == null)
-                return false;
-            var it = inv->GetInventorySlot(type, (int)slot);
+                return;
+            InventoryItem* it = inv->GetInventorySlot(type, (int)slot);
             if (it == null)
-                return false;
+                return;
             itemId = it->ItemId;
             qty = it->Quantity;
-            return true;
         }
         catch
         {
-            return false;
+            // ignored
         }
     }
 
@@ -986,7 +1106,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
         {
             if (inv == null)
                 return false;
-            var c = inv->GetInventoryContainer(type);
+            InventoryContainer* c = inv->GetInventoryContainer(type);
             return c != null && c->IsLoaded && c->Size > 0;
         }
         catch
@@ -994,85 +1114,6 @@ public sealed unsafe class Plugin : IDalamudPlugin
             return false;
         }
     }
-
-    private CompanyChestOrganizeState companyChestOrganize;
-
-    private enum ModifierMode
-    {
-        Shift,
-        Ctrl,
-        Alt,
-    }
-
-    // Inventory/armoury uses this; saddlebags often do not, so we also use IContextMenu fallback.
-    // Use ClientStructs delegate for better compatibility (per Discord feedback).
-    private Hook<AgentInventoryContext.Delegates.OpenForItemSlot>? openForItemSlotHook = null;
-
-    // AtkUnitBase.Close: Use IAddonLifecycle service instead of manual signature (recommended by Dalamud team).
-    // We use Hide() calls directly where needed, and IAddonLifecycle for addon lifecycle events.
-
-    // NOTE: For inventory transfers (including Free Company Chest), use the client callback handler:
-    // RaptureAtkModule::HandleItemMove(AtkValue* returnValue, AtkValue* values, uint valueCount)
-    // This is exposed directly by FFXIVClientStructs as a member function, so we do not signature-scan it ourselves.
-
-    // Use ContextMenuHandler.AutoContextAction
-    private enum AutoContextAction
-    {
-        AddAllToSaddlebag = ContextMenuHandler.AutoContextAction.AddAllToSaddlebag,
-        RemoveAllFromSaddlebag = ContextMenuHandler.AutoContextAction.RemoveAllFromSaddlebag,
-        PlaceInArmouryChest = ContextMenuHandler.AutoContextAction.PlaceInArmouryChest,
-        ReturnToInventory = ContextMenuHandler.AutoContextAction.ReturnToInventory,
-        EntrustToRetainer = ContextMenuHandler.AutoContextAction.EntrustToRetainer,
-        RetrieveFromRetainer = ContextMenuHandler.AutoContextAction.RetrieveFromRetainer,
-        RemoveFromCompanyChest = ContextMenuHandler.AutoContextAction.RemoveFromCompanyChest,
-        Split = ContextMenuHandler.AutoContextAction.Split,
-        Sort = ContextMenuHandler.AutoContextAction.Sort,
-        Trade = ContextMenuHandler.AutoContextAction.Trade,
-        Sell = ContextMenuHandler.AutoContextAction.Sell,
-    }
-
-    private static readonly string[] ArmouryAddonNames =
-    [
-        // Common internal names used by the Armoury Chest window across patches.
-        "ArmouryBoard",
-        "ArmoryBoard",
-        "Armoury",
-        "Armory",
-        "ArmouryChest",
-        "ArmoryChest",
-    ];
-
-    private static readonly string[] ReceiveEventAddonNames =
-    [
-        // Player inventory
-        "Inventory",
-
-        // Saddlebags
-        "InventoryBuddy",
-        "InventoryBuddy2",
-
-        // Armoury chest (aliases vary by patch)
-        ..ArmouryAddonNames,
-
-        // Retainer inventory
-        "RetainerGrid0",
-        "RetainerSellList",
-        "RetainerGrid",
-
-        // Company chest
-        FreeCompanyChestAddonName,
-    ];
-
-    private const string FreeCompanyChestAddonName = "FreeCompanyChest";
-    private const string InputNumericAddonName = "InputNumeric";
-    private const string ContextMenuAddonName = "ContextMenu";
-    private const string SelectYesnoAddonName = "SelectYesno";
-
-    // IMPORTANT:
-    // We suppress by forcing alpha to 0 in PreDraw, which can "stick" because the same addon instance is reused.
-    // Therefore we track suppression windows and also restore alpha when not suppressing.
-    private long suppressContextMenuUntilMs;
-    private long suppressInputNumericUntilMs;
 
     private void ArmSuppressContextMenu(long now, int durationMs = 250)
         => suppressContextMenuUntilMs = Math.Max(suppressContextMenuUntilMs, now + durationMs);
@@ -1084,7 +1125,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
     {
         // Don't hardcode enum names; discover them by name at runtime so we don't break across patches/structs.
         // Limit to the configured number of item compartments (default 3; can be upgraded to 5).
-        var max = Math.Clamp(Configuration.CompanyChestCompartments, 3, 5);
+        int max = Math.Clamp(Configuration.CompanyChestCompartments, 3, 5);
         return Enum.GetValues<InventoryType>()
             .Where(IsCompanyChestType)
             .OrderBy(v => (int)v)
@@ -1107,7 +1148,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
             return null;
         try
         {
-            var r = list->GetItemRenderer(idx);
+            AtkComponentListItemRenderer* r = list->GetItemRenderer(idx);
             return r != null ? &r->AtkDragDropInterface : null;
         }
         catch
@@ -1123,13 +1164,13 @@ public sealed unsafe class Plugin : IDalamudPlugin
 
         try
         {
-            var t = component->GetComponentType();
+            ComponentType t = component->GetComponentType();
             return t switch
             {
                 ComponentType.DragDrop => &((AtkComponentDragDrop*)component)->AtkDragDropInterface,
                 ComponentType.ListItemRenderer => &((AtkComponentListItemRenderer*)component)->AtkDragDropInterface,
                 ComponentType.List => TryGetDdiFromListIndex((AtkComponentList*)component, preferredListIndex),
-                _ => null,
+                var _ => null
             };
         }
         catch
@@ -1147,21 +1188,21 @@ public sealed unsafe class Plugin : IDalamudPlugin
                 return false;
 
             // Scan component nodes for any DragDrop/List that yields a FreeCompanyPageX payload.
-            var nodeCount = addon->UldManager.NodeListCount;
+            ushort nodeCount = addon->UldManager.NodeListCount;
             if (nodeCount <= 0)
                 return false;
 
-            var maxNodes = Math.Min((int)nodeCount, 2000);
-            var bestPage = default(InventoryType);
-            var bestHits = 0;
+            int maxNodes = Math.Min((int)nodeCount, 2000);
+            InventoryType bestPage = default;
+            int bestHits = 0;
 
             // Track the most frequently observed FreeCompanyPageX among *visible* nodes.
             // Rationale: the FC chest addon often keeps nodes for other tabs alive but hidden; a "first match wins"
             // scan can return the wrong tab (observed off-by-one behavior).
-            var hitsByPage = new Dictionary<InventoryType, int>(8);
-            for (var i = 0; i < maxNodes; i++)
+            Dictionary<InventoryType, int> hitsByPage = new(8);
+            for(int i = 0; i < maxNodes; i++)
             {
-                var n = addon->UldManager.NodeList[i];
+                AtkResNode* n = addon->UldManager.NodeList[i];
                 if (n == null)
                     continue;
 
@@ -1182,24 +1223,24 @@ public sealed unsafe class Plugin : IDalamudPlugin
                 if (compNode == null || compNode->Component == null)
                     continue;
 
-                var component = compNode->Component;
-                var ct = component->GetComponentType();
+                AtkComponentBase* component = compNode->Component;
+                ComponentType ct = component->GetComponentType();
                 if (ct == ComponentType.List)
                 {
-                    var list = (AtkComponentList*)component;
+                    AtkComponentList* list = (AtkComponentList*)component;
                     // Try a few indices; FC chest lists usually expose items here.
-                    var observed = 0;
-                    for (var li = 0; li < 30; li++)
+                    int observed = 0;
+                    for(int li = 0; li < 30; li++)
                     {
-                        var ddi = TryGetDdiFromListIndex(list, li);
+                        AtkDragDropInterface* ddi = TryGetDdiFromListIndex(list, li);
                         if (ddi == null || (nint)ddi < MinLikelyPointer)
                             continue;
 
-                        if (TryGetSlotFromDragDropInterface(ddi, out var invType, out _))
+                        if (TryGetSlotFromDragDropInterface(ddi, out InventoryType invType, out int _))
                         {
                             if (IsCompanyChestType(invType))
                             {
-                                hitsByPage.TryGetValue(invType, out var cur);
+                                hitsByPage.TryGetValue(invType, out int cur);
                                 cur++;
                                 hitsByPage[invType] = cur;
                                 if (cur > bestHits)
@@ -1218,15 +1259,15 @@ public sealed unsafe class Plugin : IDalamudPlugin
                 }
                 else
                 {
-                    var ddi = TryGetDdiFromComponent(component, preferredListIndex: 0);
+                    AtkDragDropInterface* ddi = TryGetDdiFromComponent(component);
                     if (ddi == null || (nint)ddi < MinLikelyPointer)
                         continue;
 
-                    if (TryGetSlotFromDragDropInterface(ddi, out var invType, out _))
+                    if (TryGetSlotFromDragDropInterface(ddi, out InventoryType invType, out int _))
                     {
                         if (IsCompanyChestType(invType))
                         {
-                            hitsByPage.TryGetValue(invType, out var cur);
+                            hitsByPage.TryGetValue(invType, out int cur);
                             cur++;
                             hitsByPage[invType] = cur;
                             if (cur > bestHits)
@@ -1260,7 +1301,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
         {
             if (values == null || idx < 0 || idx >= count)
                 return false;
-            var v = values + idx;
+            AtkValue* v = values + idx;
             if (v->Type == AtkValueType.Int)
             {
                 value = v->Int;
@@ -1286,27 +1327,27 @@ public sealed unsafe class Plugin : IDalamudPlugin
             if (addon == null || addon->AtkValues == null || addon->AtkValuesCount <= 0)
                 return;
 
-            var values = addon->AtkValues;
-            var count = (int)addon->AtkValuesCount;
-            var max = Math.Min(count, 80);
+            AtkValue* values = addon->AtkValues;
+            int count = addon->AtkValuesCount;
+            int max = Math.Min(count, 80);
 
-            for (var i = 0; i < max; i++)
+            for(int i = 0; i < max; i++)
             {
-                if (!TryGetAtkValueInt(values, max, i, out var n))
+                if (!TryGetAtkValueInt(values, max, i, out int n))
                     continue;
 
                 // Only small integers are plausible "tab indices".
                 if (n < 0 || n > 10)
                     continue;
 
-                if (!companyChestSelectedTabCandidates.TryGetValue(i, out var map))
+                if (!companyChestSelectedTabCandidates.TryGetValue(i, out Dictionary<int, InventoryType>? map))
                 {
-                    map = new Dictionary<int, InventoryType>(8);
+                    map = new(8);
                     companyChestSelectedTabCandidates[i] = map;
                 }
 
                 // If we see conflicting mappings for the same (index,value), drop this candidate index.
-                if (map.TryGetValue(n, out var existing) && existing != selectedPage)
+                if (map.TryGetValue(n, out InventoryType existing) && existing != selectedPage)
                 {
                     companyChestSelectedTabCandidates.Remove(i);
                     continue;
@@ -1316,11 +1357,11 @@ public sealed unsafe class Plugin : IDalamudPlugin
             }
 
             // Pick the best candidate index (most distinct pages mapped).
-            var bestIdx = -1;
-            var bestDistinct = 0;
-            foreach (var kv in companyChestSelectedTabCandidates)
+            int bestIdx = -1;
+            int bestDistinct = 0;
+            foreach(KeyValuePair<int, Dictionary<int, InventoryType>> kv in companyChestSelectedTabCandidates)
             {
-                var distinct = kv.Value.Values.Distinct().Count();
+                int distinct = kv.Value.Values.Distinct().Count();
                 if (distinct > bestDistinct)
                 {
                     bestDistinct = distinct;
@@ -1352,19 +1393,19 @@ public sealed unsafe class Plugin : IDalamudPlugin
             if (companyChestSelectedTabAtkValueIndex < 0)
                 return false;
 
-            if (!TryGetVisibleAddon(FreeCompanyChestAddonName, out var addon, WideAddonSearchMaxIndex) || addon == null || addon->Id != addonId)
+            if (!TryGetVisibleAddon(FreeCompanyChestAddonName, out AtkUnitBase* addon, WideAddonSearchMaxIndex) || addon == null || addon->Id != addonId)
                 return false;
 
             if (addon->AtkValues == null || addon->AtkValuesCount <= 0)
                 return false;
 
-            if (!companyChestSelectedTabCandidates.TryGetValue(companyChestSelectedTabAtkValueIndex, out var map) || map.Count == 0)
+            if (!companyChestSelectedTabCandidates.TryGetValue(companyChestSelectedTabAtkValueIndex, out Dictionary<int, InventoryType>? map) || map.Count == 0)
                 return false;
 
-            if (!TryGetAtkValueInt(addon->AtkValues, (int)addon->AtkValuesCount, companyChestSelectedTabAtkValueIndex, out var n))
+            if (!TryGetAtkValueInt(addon->AtkValues, addon->AtkValuesCount, companyChestSelectedTabAtkValueIndex, out int n))
                 return false;
 
-            if (!map.TryGetValue(n, out var p))
+            if (!map.TryGetValue(n, out InventoryType p))
                 return false;
 
             if (!IsCompanyChestType(p))
@@ -1379,151 +1420,11 @@ public sealed unsafe class Plugin : IDalamudPlugin
         }
     }
 
-    public Plugin()
-    {
-        Configuration = PluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
-
-        // Config migration: ensure DebugMode defaults to OFF even for existing installs.
-        try
-        {
-            if (Configuration.Version < 3)
-            {
-                Configuration.DebugMode = false;
-                Configuration.Version = 3;
-                Configuration.Save();
-            }
-            else if (Configuration.Version > 3)
-            {
-                // If the user downgrades, don't overwrite their config; just keep their stored values.
-            }
-            else
-            {
-                // Version == 3: still ensure debug isn't accidentally on by default after updates.
-                // (User can re-enable it explicitly.)
-                // No auto-save here to avoid writing config every startup.
-            }
-        }
-        catch
-        {
-            // ignore
-        }
-
-        configWindow = new QuickTransferWindow(Configuration);
-        windowSystem.AddWindow(configWindow);
-
-        CommandManager.AddHandler(CommandName, new CommandInfo(OnCommand)
-        {
-            HelpMessage = "Open QuickTransfer settings",
-        });
-
-        PluginInterface.UiBuilder.Draw += windowSystem.Draw;
-        PluginInterface.UiBuilder.OpenConfigUi += OpenConfigUi;
-
-        InteropProvider.InitializeFromAttributes(this);
-        
-        // Hook using ClientStructs delegate (per Discord feedback for better compatibility)
-        try
-        {
-            // AgentInventoryContext.Delegates.OpenForItemSlot is the delegate type
-            // We need to get the function pointer from MemberFunctionPointers to hook it
-            var funcPtr = AgentInventoryContext.MemberFunctionPointers.OpenForItemSlot;
-            if (funcPtr != null)
-            {
-                openForItemSlotHook = InteropProvider.HookFromAddress<AgentInventoryContext.Delegates.OpenForItemSlot>(
-                    (nint)funcPtr,
-                    OpenForItemSlotDetour);
-                openForItemSlotHook?.Enable();
-            }
-            else
-            {
-                Log.Warning("[QuickTransfer] AgentInventoryContext.MemberFunctionPointers.OpenForItemSlot is null - signature may not be resolved");
-            }
-        }
-        catch (Exception ex)
-        {
-            Log.Warning(ex, "[QuickTransfer] Failed to hook OpenForItemSlot using ClientStructs delegate - falling back to manual signature");
-            // Fallback: try manual signature hook
-            try
-            {
-                openForItemSlotHook = InteropProvider.HookFromSignature<AgentInventoryContext.Delegates.OpenForItemSlot>(
-                    "83 B9 ?? ?? ?? ?? ?? 7E ?? 39 91",
-                    OpenForItemSlotDetour);
-                openForItemSlotHook?.Enable();
-            }
-            catch (Exception ex2)
-            {
-                Log.Error(ex2, "[QuickTransfer] Failed to hook OpenForItemSlot with fallback signature");
-            }
-        }
-
-        // Saddlebags can bypass OpenForItemSlot, so use a safe deferred click via context menu events.
-        ContextMenu.OnMenuOpened += OnContextMenuOpened;
-        Framework.Update += OnFrameworkUpdate;
-
-        // Lifecycle hooks:
-        // Register with explicit addon names; wildcard registration is not reliable across Dalamud versions/builds.
-        AddonLifecycle.RegisterListener(AddonEvent.PreSetup, InputNumericAddonName, OnInputNumericPreSetup);
-        AddonLifecycle.RegisterListener(AddonEvent.PreDraw, ContextMenuAddonName, OnAddonPreDraw);
-        AddonLifecycle.RegisterListener(AddonEvent.PreDraw, InputNumericAddonName, OnAddonPreDraw);
-        foreach (var name in ReceiveEventAddonNames)
-            AddonLifecycle.RegisterListener(AddonEvent.PreReceiveEvent, name, OnAddonReceiveEvent);
-
-        // Listen for system error messages (e.g. "Another player is using the chest") so we can stop FC chest organize/deposit
-        // instead of spamming actions.
-        ChatGui.ChatMessage += OnChatMessage;
-
-        Log.Information($"Loaded {PluginInterface.Manifest.Name}.");
-        Log.Information(
-            $"[QuickTransfer] DebugMode={Configuration.DebugMode}, Enabled={Configuration.Enabled}, " +
-            $"EnableMiddleClickSort={Configuration.EnableMiddleClickSort}, " +
-            $"EnableCompanyChest={Configuration.EnableCompanyChest}, " +
-            $"EnableCompanyChestMiddleClickOrganize={Configuration.EnableCompanyChestMiddleClickOrganize}");
-        if (Configuration.DebugMode)
-        {
-            try
-            {
-                var matches = Enum.GetNames<InventoryType>()
-                    .Where(n => n.Contains("FreeCompany", StringComparison.OrdinalIgnoreCase) ||
-                                n.Contains("Company", StringComparison.OrdinalIgnoreCase) ||
-                                n.Contains("Chest", StringComparison.OrdinalIgnoreCase))
-                    .ToArray();
-                Log.Information($"[QuickTransfer] InventoryType names containing Company/Chest: {string.Join(", ", matches)}");
-            }
-            catch (Exception ex)
-            {
-                Log.Warning(ex, "[QuickTransfer] Failed to enumerate InventoryType names (debug).");
-            }
-        }
-    }
-
-    public void Dispose()
-    {
-        Framework.Update -= OnFrameworkUpdate;
-        ContextMenu.OnMenuOpened -= OnContextMenuOpened;
-        ChatGui.ChatMessage -= OnChatMessage;
-        AddonLifecycle.UnregisterListener(AddonEvent.PreSetup, InputNumericAddonName, OnInputNumericPreSetup);
-        AddonLifecycle.UnregisterListener(AddonEvent.PreDraw, ContextMenuAddonName, OnAddonPreDraw);
-        AddonLifecycle.UnregisterListener(AddonEvent.PreDraw, InputNumericAddonName, OnAddonPreDraw);
-        foreach (var name in ReceiveEventAddonNames)
-            AddonLifecycle.UnregisterListener(AddonEvent.PreReceiveEvent, name, OnAddonReceiveEvent);
-
-        openForItemSlotHook?.Disable();
-        openForItemSlotHook?.Dispose();
-
-        PluginInterface.UiBuilder.Draw -= windowSystem.Draw;
-        PluginInterface.UiBuilder.OpenConfigUi -= OpenConfigUi;
-
-        windowSystem.RemoveAllWindows();
-        configWindow.Dispose();
-
-        CommandManager.RemoveHandler(CommandName);
-    }
-
     private void OnCommand(string command, string args) => OpenConfigUi();
 
     private void OpenConfigUi() => configWindow.IsOpen = true;
 
-    private void OnChatMessage(XivChatType type, int timestamp, ref SeString sender, ref SeString message, ref bool isHandled)
+    private void OnChatMessage(IHandleableChatMessage message)
     {
         try
         {
@@ -1534,7 +1435,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
             if (!companyChestOrganize.Active && !companyChestDeposit.Active)
                 return;
 
-            var text = message.TextValue ?? string.Empty;
+            string text = message.Sender.TextValue;
             if (text.Length == 0)
                 return;
 
@@ -1544,9 +1445,9 @@ public sealed unsafe class Plugin : IDalamudPlugin
                 text.Contains("Unable to store item", StringComparison.OrdinalIgnoreCase) ||
                 text.Contains("Unable to complete company chest action", StringComparison.OrdinalIgnoreCase))
             {
-                var now = Environment.TickCount64;
+                long now = Environment.TickCount64;
                 companyChestBusyHits = Math.Min(companyChestBusyHits + 1, 10);
-                var backoffMs = (long)Math.Min(60000, 5000 * (1 << Math.Min(companyChestBusyHits - 1, 4))); // 5s,10s,20s,40s,60s cap
+                long backoffMs = Math.Min(60000, 5000 * (1 << Math.Min(companyChestBusyHits - 1, 4))); // 5s,10s,20s,40s,60s cap
                 companyChestBusyUntilMs = Math.Max(companyChestBusyUntilMs, now + backoffMs);
 
                 // If the chest is busy repeatedly, stop the run and let the user try later.
@@ -1620,15 +1521,15 @@ public sealed unsafe class Plugin : IDalamudPlugin
 
         // Modifier: Ctrl+RClick (special) or Shift+RClick (default).
         // Ctrl takes priority if both are held. Use a short "latch" so quick taps still work.
-        var mode = GetModifierModeLatched(Environment.TickCount64);
+        ModifierMode? mode = GetModifierModeLatched(Environment.TickCount64);
 
         if (mode == null)
             return;
 
-        var saddlebagOpen = IsSaddlebagOpen();
-        var retainerOpen = IsRetainerOpen();
-        var companyChestOpen = IsCompanyChestOpen();
-        var specialOpen = saddlebagOpen || retainerOpen || companyChestOpen;
+        bool saddlebagOpen = IsSaddlebagOpen();
+        bool retainerOpen = IsRetainerOpen();
+        bool companyChestOpen = IsCompanyChestOpen();
+        bool specialOpen = saddlebagOpen || retainerOpen || companyChestOpen;
 
         // Ctrl is only enabled while a "special" container is open (Saddlebag or Retainer),
         // so Shift/Ctrl can be used to disambiguate behaviors.
@@ -1647,7 +1548,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
         if (mode == ModifierMode.Ctrl && IsCompanyChestType(inventoryType))
             return;
 
-        var now = Environment.TickCount64;
+        long now = Environment.TickCount64;
         if (now - lastActionTickMs < Configuration.TransferCooldownMs)
             return;
 
@@ -1658,7 +1559,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
         if (mode == ModifierMode.Shift && companyChestOpen && Configuration.EnableCompanyChest)
         {
             // If a quantity dialog is already open, don't start another move.
-            if (TryGetVisibleAddon(InputNumericAddonName, out _))
+            if (TryGetVisibleAddon(InputNumericAddonName, out AtkUnitBase* _))
                 return;
 
             // Deposit: Inventory -> Company Chest (UI-driven move).
@@ -1671,12 +1572,12 @@ public sealed unsafe class Plugin : IDalamudPlugin
             }
         }
 
-        if (TryAutoSelectAndClose(agent, mode.Value, out var chosenText, out var chosenIndex))
+        if (TryAutoSelectAndClose(agent, mode.Value, out string chosenText, out int chosenIndex))
         {
             lastActionTickMs = now;
             if (Configuration.DebugMode)
                 Log.Information($"[QuickTransfer] ({mode} + RClick) Selected context action '{chosenText}' (idx={chosenIndex}) via OpenForItemSlot.");
-            
+
             // Set up Trade quantity auto-confirm if Trade was selected
             if (mode == ModifierMode.Shift &&
                 chosenText.Length > 0 &&
@@ -1691,7 +1592,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
                 pendingCompanyChestNumericValueSetAtMs = 0;
                 pendingCompanyChestNumericDesired = 0;
                 pendingCompanyChestNumericHalf = false;
-                ArmSuppressInputNumeric(now, 1500);
+                ArmSuppressInputNumeric(now);
             }
             // Set up vendor Sell quantity auto-confirm if Sell was selected
             if (Configuration.AutoConfirmVendorSell &&
@@ -1708,13 +1609,13 @@ public sealed unsafe class Plugin : IDalamudPlugin
                 pendingCompanyChestNumericValueSetAtMs = 0;
                 pendingCompanyChestNumericDesired = 0;
                 pendingCompanyChestNumericHalf = false;
-                ArmSuppressInputNumeric(now, 1500);
+                ArmSuppressInputNumeric(now);
             }
         }
         else if (Configuration.DebugMode && mode == ModifierMode.Ctrl)
         {
             Log.Information("[QuickTransfer] (Ctrl + RClick) No matching armoury action found in context menu.");
-            DebugDumpContextMenu(agent, maxItems: 24);
+            DebugDumpContextMenu(agent, 24);
         }
     }
 
@@ -1723,17 +1624,17 @@ public sealed unsafe class Plugin : IDalamudPlugin
         if (!Configuration.Enabled)
             return;
 
-        var now = Environment.TickCount64;
-        var middleSortActive = pendingMiddleClickSortUntilMs > 0 && now <= pendingMiddleClickSortUntilMs;
-        var mode = middleSortActive ? null : GetModifierModeLatched(now);
+        long now = Environment.TickCount64;
+        bool middleSortActive = pendingMiddleClickSortUntilMs > 0 && now <= pendingMiddleClickSortUntilMs;
+        ModifierMode? mode = middleSortActive ? null : GetModifierModeLatched(now);
 
         if (!middleSortActive && mode == null)
             return;
 
-        var saddlebagOpen = IsSaddlebagOpen();
-        var retainerOpen = IsRetainerOpen();
-        var companyChestOpen = IsCompanyChestOpen();
-        var specialOpen = saddlebagOpen || retainerOpen || companyChestOpen;
+        bool saddlebagOpen = IsSaddlebagOpen();
+        bool retainerOpen = IsRetainerOpen();
+        bool companyChestOpen = IsCompanyChestOpen();
+        bool specialOpen = saddlebagOpen || retainerOpen || companyChestOpen;
 
         if (!middleSortActive && mode == ModifierMode.Ctrl && !specialOpen)
             return;
@@ -1744,9 +1645,9 @@ public sealed unsafe class Plugin : IDalamudPlugin
         // Middle-click "Sort" uses an inventory context menu, but does not require Shift/Ctrl.
         if (middleSortActive && args.MenuType == ContextMenuType.Inventory)
         {
-            if (args.AgentPtr != IntPtr.Zero && args.AddonPtr != IntPtr.Zero)
+            if (args.AgentPtr != nint.Zero && args.AddonPtr != nint.Zero)
             {
-                pendingDeferredSortMenuClick = ((nint)args.AgentPtr, (nint)args.AddonPtr, now);
+                pendingDeferredSortMenuClick = (args.AgentPtr, args.AddonPtr, now);
                 return;
             }
         }
@@ -1765,14 +1666,14 @@ public sealed unsafe class Plugin : IDalamudPlugin
         if (args.MenuType != ContextMenuType.Inventory)
             return;
 
-        if (args.AgentPtr == IntPtr.Zero || args.AddonPtr == IntPtr.Zero)
+        if (args.AgentPtr == nint.Zero || args.AddonPtr == nint.Zero)
             return;
 
         if (mode == null)
             return;
 
         // IMPORTANT: Do not click inside the open event (re-entrancy risk).
-        pendingDeferredMenuClick = ((nint)args.AgentPtr, (nint)args.AddonPtr, Environment.TickCount64, mode.Value);
+        pendingDeferredMenuClick = (args.AgentPtr, args.AddonPtr, Environment.TickCount64, mode.Value);
     }
 
     private void OnFrameworkUpdate(IFramework framework)
@@ -1780,21 +1681,21 @@ public sealed unsafe class Plugin : IDalamudPlugin
         if (!Configuration.Enabled)
             return;
 
-        var now = Environment.TickCount64;
+        long now = Environment.TickCount64;
 
         // Poll mouse button state from Win32 and log transitions in DebugMode.
         // This helps diagnose cases where the game doesn't emit click events for MMB.
-        var lDown = IsVkDown(0x01); // VK_LBUTTON
-        var rDown = IsVkDown(0x02); // VK_RBUTTON
-        var mDown = IsVkDown(0x04); // VK_MBUTTON
-        var x1Down = IsVkDown(0x05); // VK_XBUTTON1
-        var x2Down = IsVkDown(0x06); // VK_XBUTTON2
+        bool lDown = IsVkDown(0x01); // VK_LBUTTON
+        bool rDown = IsVkDown(0x02); // VK_RBUTTON
+        bool mDown = IsVkDown(0x04); // VK_MBUTTON
+        bool x1Down = IsVkDown(0x05); // VK_XBUTTON1
+        bool x2Down = IsVkDown(0x06); // VK_XBUTTON2
 
-        var prevL = lastVkLButtonDown;
-        var prevR = lastVkRButtonDown;
-        var prevM = lastVkMButtonDown;
-        var prevX1 = lastVkX1ButtonDown;
-        var prevX2 = lastVkX2ButtonDown;
+        bool prevL = lastVkLButtonDown;
+        bool prevR = lastVkRButtonDown;
+        bool prevM = lastVkMButtonDown;
+        bool prevX1 = lastVkX1ButtonDown;
+        bool prevX2 = lastVkX2ButtonDown;
 
         if (Configuration.DebugMode && (lDown != prevL || rDown != prevR || mDown != prevM || x1Down != prevX1 || x2Down != prevX2))
             Log.Information($"[QuickTransfer] Win32 mouse state: L={(lDown ? 1 : 0)} R={(rDown ? 1 : 0)} M={(mDown ? 1 : 0)} X1={(x1Down ? 1 : 0)} X2={(x2Down ? 1 : 0)}");
@@ -1807,7 +1708,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
 
         // If a "middle-ish" button is pressed (rising edge), queue a sort using the last hovered slot.
         // This works even if the client doesn't generate a distinct UI click event on this build.
-        var middleEdge = (mDown && !prevM) || (x1Down && !prevX1) || (x2Down && !prevX2);
+        bool middleEdge = (mDown && !prevM) || (x1Down && !prevX1) || (x2Down && !prevX2);
         if (middleEdge)
         {
             if (Configuration.EnableMiddleClickSort)
@@ -1826,17 +1727,17 @@ public sealed unsafe class Plugin : IDalamudPlugin
 
         // Quantity prompt auto-confirm (best effort).
         // Trade and Split always auto-confirm; Company Chest and Vendor Sell respect their config settings.
-        var shouldAutoConfirm = pendingNumericKind == PendingNumericKind.Trade ||
-                                pendingNumericKind == PendingNumericKind.Split ||
-                                (Configuration.AutoConfirmVendorSell && pendingNumericKind == PendingNumericKind.Sell) ||
-                                (Configuration.AutoConfirmCompanyChestQuantity && pendingNumericKind != PendingNumericKind.None);
-        
+        bool shouldAutoConfirm = pendingNumericKind == PendingNumericKind.Trade ||
+                                 pendingNumericKind == PendingNumericKind.Split ||
+                                 (Configuration.AutoConfirmVendorSell && pendingNumericKind == PendingNumericKind.Sell) ||
+                                 (Configuration.AutoConfirmCompanyChestQuantity && pendingNumericKind != PendingNumericKind.None);
+
         if (shouldAutoConfirm &&
             pendingNumericKind != PendingNumericKind.None &&
             pendingCompanyChestNumericConfirmUntilMs > 0 &&
             now <= pendingCompanyChestNumericConfirmUntilMs)
         {
-            if (TryGetVisibleAddon(InputNumericAddonName, out var inputNumeric))
+            if (TryGetVisibleAddon(InputNumericAddonName, out AtkUnitBase* inputNumeric))
             {
                 ArmSuppressInputNumeric(now);
                 // Phase 1: set max (and wait a frame so the component commits the value internally).
@@ -1848,12 +1749,12 @@ public sealed unsafe class Plugin : IDalamudPlugin
                         {
                             try
                             {
-                                var promptVal = inputNumeric->AtkValues + 6;
-                                var prompt = promptVal->Type is AtkValueType.String or AtkValueType.ManagedString ? ReadAtkValueString(*promptVal) : string.Empty;
-                                var minVal = inputNumeric->AtkValues + 2;
-                                var maxVal = inputNumeric->AtkValues + 3;
-                                var min = minVal->Type == AtkValueType.UInt ? minVal->UInt : 0U;
-                                var max = maxVal->Type == AtkValueType.UInt ? maxVal->UInt : 0U;
+                                AtkValue* promptVal = inputNumeric->AtkValues + 6;
+                                string prompt = promptVal->Type is AtkValueType.String or AtkValueType.ManagedString ? ReadAtkValueString(*promptVal) : string.Empty;
+                                AtkValue* minVal = inputNumeric->AtkValues + 2;
+                                AtkValue* maxVal = inputNumeric->AtkValues + 3;
+                                uint min = minVal->Type == AtkValueType.UInt ? minVal->UInt : 0U;
+                                uint max = maxVal->Type == AtkValueType.UInt ? maxVal->UInt : 0U;
                                 Log.Information($"[QuickTransfer] Auto-confirm InputNumeric skipped (kind={pendingNumericKind}, prompt='{prompt}', min={min}, max={max}, expectedSplitMax={pendingSplitExpectedMax}).");
                             }
                             catch
@@ -1889,12 +1790,12 @@ public sealed unsafe class Plugin : IDalamudPlugin
                     {
                         try
                         {
-                            var promptVal = inputNumeric->AtkValues + 6;
-                            var prompt = promptVal->Type is AtkValueType.String or AtkValueType.ManagedString ? ReadAtkValueString(*promptVal) : string.Empty;
-                            var minVal = inputNumeric->AtkValues + 2;
-                            var maxVal = inputNumeric->AtkValues + 3;
-                            var min = minVal->Type == AtkValueType.UInt ? minVal->UInt : 0U;
-                            var max = maxVal->Type == AtkValueType.UInt ? maxVal->UInt : 0U;
+                            AtkValue* promptVal = inputNumeric->AtkValues + 6;
+                            string prompt = promptVal->Type is AtkValueType.String or AtkValueType.ManagedString ? ReadAtkValueString(*promptVal) : string.Empty;
+                            AtkValue* minVal = inputNumeric->AtkValues + 2;
+                            AtkValue* maxVal = inputNumeric->AtkValues + 3;
+                            uint min = minVal->Type == AtkValueType.UInt ? minVal->UInt : 0U;
+                            uint max = maxVal->Type == AtkValueType.UInt ? maxVal->UInt : 0U;
                             Log.Information($"[QuickTransfer] Auto-confirm InputNumeric aborted (kind={pendingNumericKind}, prompt='{prompt}', min={min}, max={max}, expectedSplitMax={pendingSplitExpectedMax}).");
                         }
                         catch
@@ -1920,13 +1821,13 @@ public sealed unsafe class Plugin : IDalamudPlugin
                         // IMPORTANT:
                         // For InputNumeric, FireCallbackInt(value) is interpreted as the quantity being confirmed on this client build.
                         // Passing "2" causes exactly the observed behavior: moving 2 every time.
-                        var toConfirm = pendingCompanyChestNumericDesired;
+                        uint toConfirm = pendingCompanyChestNumericDesired;
                         if (toConfirm == 0)
                         {
                             // Default: confirm max (we already set the numeric input to max above).
                             try
                             {
-                                var maxVal = inputNumeric->AtkValues + 3;
+                                AtkValue* maxVal = inputNumeric->AtkValues + 3;
                                 if (maxVal->Type == AtkValueType.UInt)
                                     toConfirm = maxVal->UInt;
                                 else if (maxVal->Type == AtkValueType.Int)
@@ -1970,7 +1871,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
                         suppressInputNumericUntilMs = 0;
                     }
                 }
-                catch (Exception ex)
+                catch(Exception ex)
                 {
                     pendingCompanyChestNumericConfirmUntilMs = 0;
                     pendingCompanyChestNumericArmed = false;
@@ -1986,7 +1887,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
                 }
             }
             else if (Configuration.AutoConfirmVendorSell && pendingNumericKind == PendingNumericKind.Sell && IsVendorOpen() &&
-                     TryGetVisibleAddon(SelectYesnoAddonName, out var selectYesno) && selectYesno != null)
+                     TryGetVisibleAddon(SelectYesnoAddonName, out AtkUnitBase* selectYesno) && selectYesno != null)
             {
                 // "Are you certain you wish to sell it?" (unique/untradable) — click OK/Yes.
                 try
@@ -1995,7 +1896,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
                     if (Configuration.DebugMode)
                         Log.Information("[QuickTransfer] Auto-confirmed vendor sell Yes/No dialog (SelectYesno).");
                 }
-                catch (Exception ex)
+                catch(Exception ex)
                 {
                     if (Configuration.DebugMode)
                         Log.Warning(ex, "[QuickTransfer] Failed to auto-confirm SelectYesno.");
@@ -2027,17 +1928,31 @@ public sealed unsafe class Plugin : IDalamudPlugin
         // or when the timeout expires.
         if (pendingMoveOutValuePtr != 0 || pendingMoveAtkValuesPtr != 0)
         {
-            var inputVisible = TryGetVisibleAddon(InputNumericAddonName, out _);
+            bool inputVisible = TryGetVisibleAddon(InputNumericAddonName, out AtkUnitBase* _);
             if (inputVisible)
                 pendingMoveSawInputNumeric = true;
 
             // Important: InputNumeric often appears on a subsequent frame.
             // Do NOT free the buffers immediately just because it's not visible yet.
-            var graceExpired = pendingMoveCreatedAtMs > 0 && now - pendingMoveCreatedAtMs >= 1500;
+            bool graceExpired = pendingMoveCreatedAtMs > 0 && now - pendingMoveCreatedAtMs >= 1500;
             if ((pendingMoveSawInputNumeric && !inputVisible) || now >= pendingMoveOutValueFreeAtMs || (!inputVisible && graceExpired))
             {
-                try { if (pendingMoveOutValuePtr != 0) Marshal.FreeHGlobal(pendingMoveOutValuePtr); } catch { /* ignore */ }
-                try { if (pendingMoveAtkValuesPtr != 0) Marshal.FreeHGlobal(pendingMoveAtkValuesPtr); } catch { /* ignore */ }
+                try
+                {
+                    if (pendingMoveOutValuePtr != 0) Marshal.FreeHGlobal(pendingMoveOutValuePtr);
+                }
+                catch
+                {
+                    /* ignore */
+                }
+                try
+                {
+                    if (pendingMoveAtkValuesPtr != 0) Marshal.FreeHGlobal(pendingMoveAtkValuesPtr);
+                }
+                catch
+                {
+                    /* ignore */
+                }
                 pendingMoveOutValuePtr = 0;
                 pendingMoveOutValueFreeAtMs = 0;
                 pendingMoveAtkValuesPtr = 0;
@@ -2051,15 +1966,15 @@ public sealed unsafe class Plugin : IDalamudPlugin
             ProcessCompanyChestDeposit(now);
 
         // Company Chest organize (MMB): auto-stack + compact items within FC chest pages.
-        if (Configuration.EnableCompanyChest && Configuration.EnableCompanyChestMiddleClickOrganize)
+        if (Configuration is { EnableCompanyChest: true, EnableCompanyChestMiddleClickOrganize: true })
             ProcessCompanyChestOrganize(now);
 
         // Middle-click sort: open the context menu on the clicked slot, then auto-select "Sort".
-        var mmb = pendingMiddleClickSortRequest;
+        (InventoryType Type, int Slot, uint AddonId, long EnqueuedAtMs)? mmb = pendingMiddleClickSortRequest;
         if (Configuration.EnableMiddleClickSort && mmb != null && now - mmb.Value.EnqueuedAtMs <= 1500)
         {
             // If the request was for Company Chest, run organize instead (there is no Sort entry on the item menu).
-            if (IsCompanyChestType(mmb.Value.Type) && Configuration.EnableCompanyChest && Configuration.EnableCompanyChestMiddleClickOrganize)
+            if (IsCompanyChestType(mmb.Value.Type) && Configuration is { EnableCompanyChest: true, EnableCompanyChestMiddleClickOrganize: true })
             {
                 // Only organize the currently selected tab (we use mmb.Value.Type as the selected FreeCompanyPage).
                 StartCompanyChestOrganize(now, mmb.Value.Type);
@@ -2080,23 +1995,23 @@ public sealed unsafe class Plugin : IDalamudPlugin
                 }
 
                 // Open context menu for that slot. Our OnMenuOpened handler will enqueue the deferred sort selection.
-                var agentModule = AgentModule.Instance();
+                AgentModule* agentModule = AgentModule.Instance();
                 if (agentModule != null)
                 {
-                    var agent = agentModule->GetAgentByInternalId(AgentId.InventoryContext);
-                    var invCtx = (AgentInventoryContext*)agent;
+                    AgentInterface* agent = agentModule->GetAgentByInternalId(AgentId.InventoryContext);
+                    AgentInventoryContext* invCtx = (AgentInventoryContext*)agent;
                     if (invCtx != null)
                     {
                         try
                         {
-                            ArmSuppressContextMenu(now, 250);
+                            ArmSuppressContextMenu(now);
                             if (Configuration.DebugMode)
                                 Log.Information($"[QuickTransfer] (MMB) Calling OpenForItemSlot: type={mmb.Value.Type} slot={mmb.Value.Slot} addonId={mmb.Value.AddonId}");
 
                             // Try to open the inventory context menu using the same mysterious "a4" value the game uses.
                             // If we don't have a recorded value yet, try a small set of common candidates.
                             int[] candidates;
-                            if (!observedContextA4.TryGetValue((mmb.Value.AddonId, (uint)mmb.Value.Type), out var observedA4))
+                            if (!observedContextA4.TryGetValue((mmb.Value.AddonId, (uint)mmb.Value.Type), out int observedA4))
                             {
                                 // Heuristic: armoury boards often need a non-zero a4; try 1 first.
                                 candidates = IsArmouryType(mmb.Value.Type) ? [1, 0, 2] : [0, 1, 2];
@@ -2106,9 +2021,9 @@ public sealed unsafe class Plugin : IDalamudPlugin
                                 candidates = [observedA4, 0, 1, 2];
                             }
 
-                            var opened = false;
-                            var usedA4 = 0;
-                            foreach (var a4 in candidates.Distinct())
+                            bool opened = false;
+                            int usedA4 = 0;
+                            foreach(int a4 in candidates.Distinct())
                             {
                                 invCtx->OpenForItemSlot(mmb.Value.Type, mmb.Value.Slot, a4, mmb.Value.AddonId);
                                 usedA4 = a4;
@@ -2123,8 +2038,8 @@ public sealed unsafe class Plugin : IDalamudPlugin
                             // Fallback: don't rely solely on OnMenuOpened firing.
                             try
                             {
-                                var cm = GameGui.GetAddonByName("ContextMenu", 1);
-                                pendingDeferredSortMenuClick = ((nint)invCtx, cm.IsNull ? 0 : (nint)cm.Address, now);
+                                AtkUnitBasePtr cm = GameGui.GetAddonByName("ContextMenu");
+                                pendingDeferredSortMenuClick = ((nint)invCtx, cm.IsNull ? 0 : cm.Address, now);
                             }
                             catch
                             {
@@ -2164,10 +2079,14 @@ public sealed unsafe class Plugin : IDalamudPlugin
             pendingCloseContextMenuAtMs = 0;
             try
             {
-                var cm = (AtkUnitBase*)GameGui.GetAddonByName("ContextMenu", 1).Address;
+                AtkUnitBase* cm = (AtkUnitBase*)GameGui.GetAddonByName("ContextMenu").Address;
                 if (cm != null)
                 {
-                    try { cm->Hide(false, true, 0); } catch { /* ignore */ }
+                    try { cm->Hide(false, true, 0); }
+                    catch
+                    {
+                        /* ignore */
+                    }
                 }
             }
             catch
@@ -2177,7 +2096,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
         }
 
         // Handle deferred "default" context menus (e.g., FreeCompanyChest).
-        var pendingDefault = pendingDeferredDefaultMenu;
+        (string AddonName, long EnqueuedAtMs, ModifierMode Mode)? pendingDefault = pendingDeferredDefaultMenu;
         if (pendingDefault != null)
         {
             pendingDeferredDefaultMenu = null;
@@ -2199,13 +2118,13 @@ public sealed unsafe class Plugin : IDalamudPlugin
                     pendingCompanyChestNumericValueSetAtMs = 0;
                     pendingCompanyChestNumericDesired = 0;
                     pendingCompanyChestNumericHalf = pendingDefault.Value.Mode == ModifierMode.Alt;
-                    ArmSuppressInputNumeric(now, 1500);
+                    ArmSuppressInputNumeric(now);
                 }
                 // Keep suppression on while the remove dialog is being handled.
             }
         }
 
-        var pending = pendingDeferredMenuClick;
+        (nint AgentPtr, nint AddonPtr, long EnqueuedAtMs, ModifierMode Mode)? pending = pendingDeferredMenuClick;
         if (pending == null)
         {
             // Process deferred middle-click sort selection even if no normal deferred click.
@@ -2233,14 +2152,14 @@ public sealed unsafe class Plugin : IDalamudPlugin
 
         try
         {
-            var agent = (AgentInventoryContext*)pending.Value.AgentPtr;
+            AgentInventoryContext* agent = (AgentInventoryContext*)pending.Value.AgentPtr;
             // NOTE:
             // IMenuOpenedArgs.AddonPtr/AddOnName refers to the addon that *opened* the menu (e.g. Inventory/InventoryExpansion),
             // not the context menu addon itself. We must fire callbacks on the actual ContextMenu addon.
             AtkUnitBase* addon = null;
             try
             {
-                var cm = GameGui.GetAddonByName(ContextMenuAddonName, 1);
+                AtkUnitBasePtr cm = GameGui.GetAddonByName(ContextMenuAddonName);
                 if (!cm.IsNull)
                     addon = (AtkUnitBase*)cm.Address;
             }
@@ -2253,11 +2172,11 @@ public sealed unsafe class Plugin : IDalamudPlugin
             if (addon == null)
                 addon = (AtkUnitBase*)pending.Value.AddonPtr;
 
-            if (TryAutoSelectAndClose(agent, addon, pending.Value.Mode, out var chosenText, out var chosenIndex))
+            if (TryAutoSelectAndClose(agent, addon, pending.Value.Mode, out string chosenText, out int chosenIndex))
             {
                 lastActionTickMs = now;
                 // Split is finicky: keep the menu suppressed longer so it can't be cancelled by an early close/visibility change.
-                var suppressMs = (pending.Value.Mode == ModifierMode.Alt && chosenText.Length > 0 && ContextLabelMatches(AutoContextAction.Split, chosenText))
+                int suppressMs = (pending.Value.Mode == ModifierMode.Alt && chosenText.Length > 0 && ContextLabelMatches(AutoContextAction.Split, chosenText))
                     ? 3000
                     : 1500;
                 ArmSuppressContextMenu(now, suppressMs);
@@ -2274,7 +2193,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
                     pendingCompanyChestNumericValueSetAtMs = 0;
                     pendingCompanyChestNumericDesired = 0;
                     pendingCompanyChestNumericHalf = false;
-                    ArmSuppressInputNumeric(now, 1500);
+                    ArmSuppressInputNumeric(now);
                 }
                 if (Configuration.AutoConfirmVendorSell &&
                     pending.Value.Mode == ModifierMode.Shift &&
@@ -2291,7 +2210,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
                     pendingCompanyChestNumericValueSetAtMs = 0;
                     pendingCompanyChestNumericDesired = 0;
                     pendingCompanyChestNumericHalf = false;
-                    ArmSuppressInputNumeric(now, 1500);
+                    ArmSuppressInputNumeric(now);
                 }
                 if (Configuration.EnableCompanyChest &&
                     pending.Value.Mode == ModifierMode.Shift &&
@@ -2306,7 +2225,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
                     pendingCompanyChestNumericValueSetAtMs = 0;
                     pendingCompanyChestNumericDesired = 0;
                     pendingCompanyChestNumericHalf = false;
-                    ArmSuppressInputNumeric(now, 1500);
+                    ArmSuppressInputNumeric(now);
                 }
                 if (pending.Value.Mode == ModifierMode.Alt &&
                     chosenText.Length > 0 &&
@@ -2326,9 +2245,9 @@ public sealed unsafe class Plugin : IDalamudPlugin
                     // Record expected split max (qty-1) to recognize the right dialog even if the prompt isn't English.
                     try
                     {
-                        var srcType = (InventoryType)agent->TargetInventoryId;
-                        var srcSlot = (int)agent->TargetInventorySlotId;
-                        if (TryGetItemInfo(srcType, srcSlot, out _, out _, out var qty) && qty > 1)
+                        InventoryType srcType = agent->TargetInventoryId;
+                        int srcSlot = agent->TargetInventorySlotId;
+                        if (TryGetItemInfo(srcType, srcSlot, out uint _, out bool _, out uint qty) && qty > 1)
                         {
                             pendingSplitExpectedMax = qty - 1;
                             pendingSplitExpectedUntilMs = now + 5000;
@@ -2351,10 +2270,10 @@ public sealed unsafe class Plugin : IDalamudPlugin
             else if (Configuration.DebugMode && pending.Value.Mode == ModifierMode.Ctrl)
             {
                 Log.Information("[QuickTransfer] (Ctrl + RClick) Deferred menu opened but no matching 'Place in Armoury Chest' action was found.");
-                DebugDumpContextMenu(agent, maxItems: 24);
+                DebugDumpContextMenu(agent, 24);
             }
         }
-        catch (Exception ex)
+        catch(Exception ex)
         {
             Log.Warning(ex, "[QuickTransfer] Deferred menu select failed.");
         }
@@ -2365,7 +2284,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
 
     private void ProcessDeferredSortMenuClick(long now)
     {
-        var pendingSort = pendingDeferredSortMenuClick;
+        (nint AgentPtr, nint AddonPtr, long EnqueuedAtMs)? pendingSort = pendingDeferredSortMenuClick;
         if (pendingSort == null)
             return;
 
@@ -2379,8 +2298,8 @@ public sealed unsafe class Plugin : IDalamudPlugin
             {
                 try
                 {
-                    var agent = (AgentInventoryContext*)pendingSort.Value.AgentPtr;
-                    var count = agent != null ? agent->ContextItemCount : -1;
+                    AgentInventoryContext* agent = (AgentInventoryContext*)pendingSort.Value.AgentPtr;
+                    int count = agent != null ? agent->ContextItemCount : -1;
                     Log.Information($"[QuickTransfer] (MMB) Deferred sort timed out (ContextItemCount={count}).");
                 }
                 catch
@@ -2395,15 +2314,15 @@ public sealed unsafe class Plugin : IDalamudPlugin
 
         try
         {
-            var agent = (AgentInventoryContext*)pendingSort.Value.AgentPtr;
-            var addon = (AtkUnitBase*)pendingSort.Value.AddonPtr;
+            AgentInventoryContext* agent = (AgentInventoryContext*)pendingSort.Value.AgentPtr;
+            AtkUnitBase* addon = (AtkUnitBase*)pendingSort.Value.AddonPtr;
 
             // If we didn't have the ContextMenu addon pointer yet, try to resolve it now.
             if (addon == null)
             {
                 try
                 {
-                    var cm = GameGui.GetAddonByName("ContextMenu", 1);
+                    AtkUnitBasePtr cm = GameGui.GetAddonByName("ContextMenu");
                     if (!cm.IsNull)
                     {
                         addon = (AtkUnitBase*)cm.Address;
@@ -2425,7 +2344,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
             if (addon == null)
                 return;
 
-            if (TrySelectSortAndClose(agent, addon, out var chosenText, out var chosenIndex))
+            if (TrySelectSortAndClose(agent, addon, out string chosenText, out int chosenIndex))
             {
                 pendingDeferredSortMenuClick = null;
                 pendingMiddleClickSortUntilMs = 0;
@@ -2433,10 +2352,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
                 ArmSuppressContextMenu(now, 500);
                 if (Configuration.DebugMode)
                 {
-                    if (chosenIndex >= 0)
-                        Log.Information($"[QuickTransfer] (MMB) Selected context action '{chosenText}' (idx={chosenIndex}) via deferred OnMenuOpened.");
-                    else
-                        Log.Information("[QuickTransfer] (MMB) Already sorted (Undo Sort present); no action taken.");
+                    Log.Information(chosenIndex >= 0 ? $"[QuickTransfer] (MMB) Selected context action '{chosenText}' (idx={chosenIndex}) via deferred OnMenuOpened." : "[QuickTransfer] (MMB) Already sorted (Undo Sort present); no action taken.");
                 }
             }
             else
@@ -2449,15 +2365,22 @@ public sealed unsafe class Plugin : IDalamudPlugin
                 if (Configuration.DebugMode)
                 {
                     Log.Information($"[QuickTransfer] (MMB) Context menu opened but no 'Sort' entry was found (count={agent->ContextItemCount}).");
-                    DebugDumpContextMenu(agent, maxItems: 32);
+                    DebugDumpContextMenu(agent, 32);
                 }
 
                 pendingDeferredSortMenuClick = null;
                 pendingMiddleClickSortUntilMs = 0;
-                try { if (addon != null) CloseContextMenuAddon(agent, addon); } catch { /* ignore */ }
+                try
+                {
+                    CloseContextMenuAddon(agent, addon);
+                }
+                catch
+                {
+                    /* ignore */
+                }
             }
         }
-        catch (Exception ex)
+        catch(Exception ex)
         {
             pendingDeferredSortMenuClick = null;
             pendingMiddleClickSortUntilMs = 0;
@@ -2469,12 +2392,12 @@ public sealed unsafe class Plugin : IDalamudPlugin
     {
         try
         {
-            var name = args.AddonName ?? string.Empty;
-            var now = Environment.TickCount64;
+            string name = args.AddonName;
+            long now = Environment.TickCount64;
 
             if (string.Equals(name, ContextMenuAddonName, StringComparison.OrdinalIgnoreCase))
             {
-                var addon = (AtkUnitBase*)args.Addon.Address;
+                AtkUnitBase* addon = (AtkUnitBase*)args.Addon.Address;
                 if (now <= suppressContextMenuUntilMs)
                     MakeAddonInvisible(addon);
                 else
@@ -2483,7 +2406,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
 
             if (string.Equals(name, InputNumericAddonName, StringComparison.OrdinalIgnoreCase))
             {
-                var addon = (AtkUnitBase*)args.Addon.Address;
+                AtkUnitBase* addon = (AtkUnitBase*)args.Addon.Address;
                 if (now <= suppressInputNumericUntilMs)
                     MakeAddonInvisible(addon);
                 else
@@ -2506,25 +2429,29 @@ public sealed unsafe class Plugin : IDalamudPlugin
             if (args is not AddonReceiveEventArgs recv)
                 return;
 
-            var now = Environment.TickCount64;
+            long now = Environment.TickCount64;
             if (Configuration.DebugMode && !debugPrintedReceiveEventHook)
             {
                 debugPrintedReceiveEventHook = true;
-                try { ChatGui.Print("[QuickTransfer] ReceiveEvent hook active (MMB debug)."); } catch { /* ignore */ }
+                try { ChatGui.Print("[QuickTransfer] ReceiveEvent hook active (MMB debug)."); }
+                catch
+                {
+                    /* ignore */
+                }
                 Log.Information("[QuickTransfer] ReceiveEvent hook active (MMB debug).");
             }
 
-            var eventType = (AtkEventType)recv.AtkEventType;
-            var eventData = (AtkEventData*)recv.AtkEventData;
-            var mouseButtonId = eventData != null ? eventData->MouseData.ButtonId : (byte)255;
-            var dragDropMouseButtonId = eventData != null ? eventData->DragDropData.MouseButtonId : (byte)255;
+            AtkEventType eventType = (AtkEventType)recv.AtkEventType;
+            AtkEventData* eventData = (AtkEventData*)recv.AtkEventData;
+            byte mouseButtonId = eventData != null ? eventData->MouseData.ButtonId : (byte)255;
+            byte dragDropMouseButtonId = eventData != null ? eventData->DragDropData.MouseButtonId : (byte)255;
 
             // Track last-hovered dragdrop (for polling-based triggers).
             // IMPORTANT:
             // - For ArmouryBoard, only capture from drag-drop rollover/click (avoids bad union reads on some builds).
             // - For Inventory/Saddlebags, we also allow MouseOver by resolving the DDI from atkEvent->Node (safe path).
-            var addonName = args.AddonName ?? string.Empty;
-            var allowMouseOverCapture =
+            string addonName = args.AddonName;
+            bool allowMouseOverCapture =
                 addonName.Equals("Inventory", StringComparison.OrdinalIgnoreCase) ||
                 addonName.Equals("InventoryBuddy", StringComparison.OrdinalIgnoreCase) ||
                 addonName.Equals("InventoryBuddy2", StringComparison.OrdinalIgnoreCase) ||
@@ -2540,8 +2467,8 @@ public sealed unsafe class Plugin : IDalamudPlugin
             {
                 try
                 {
-                    var ab = (AtkUnitBase*)args.Addon.Address;
-                    var id = ab != null ? ab->Id : 0u;
+                    AtkUnitBase* ab = (AtkUnitBase*)args.Addon.Address;
+                    uint id = ab != null ? ab->Id : 0u;
                     if (eventType is AtkEventType.MouseOut or AtkEventType.DragDropRollOut or AtkEventType.ListItemRollOut)
                     {
                         lastHoverAddon = null;
@@ -2564,9 +2491,9 @@ public sealed unsafe class Plugin : IDalamudPlugin
             {
                 try
                 {
-                    var ab = (AtkUnitBase*)args.Addon.Address;
-                    var id = ab != null ? ab->Id : 0u;
-                    if (id != 0 && TryMapCompanyChestTabParamToPage(recv.EventParam, out var selectedPage))
+                    AtkUnitBase* ab = (AtkUnitBase*)args.Addon.Address;
+                    uint id = ab != null ? ab->Id : 0u;
+                    if (id != 0 && TryMapCompanyChestTabParamToPage(recv.EventParam, out InventoryType selectedPage))
                     {
                         lastSelectedCompanyChestPage = (selectedPage, id, now);
                         ObserveCompanyChestTabFromAtkValues(ab, selectedPage);
@@ -2606,9 +2533,9 @@ public sealed unsafe class Plugin : IDalamudPlugin
             else if (eventType is AtkEventType.DragDropRollOver or AtkEventType.DragDropClick ||
                      (allowMouseOverCapture && eventType is AtkEventType.MouseOver))
             {
-                if (TryGetDragDropInterfaceFromReceiveEvent(args, recv, eventType, eventData, out var hAddonId, out var hDdi) && hDdi != null)
+                if (TryGetDragDropInterfaceFromReceiveEvent(args, recv, eventType, eventData, out uint hAddonId, out AtkDragDropInterface* hDdi) && hDdi != null)
                 {
-                    var ptr = (nint)hDdi;
+                    nint ptr = (nint)hDdi;
                     if (ptr >= MinLikelyPointer)
                     {
                         lastHoverDdi = (ptr, hAddonId, now);
@@ -2620,7 +2547,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
                     {
                         try
                         {
-                            if (TryGetSlotFromDragDropInterface(hDdi, out var hoverInvType, out _))
+                            if (TryGetSlotFromDragDropInterface(hDdi, out InventoryType hoverInvType, out int _))
                             {
                                 if (IsCompanyChestType(hoverInvType))
                                     lastHoverCompanyChestPage = (hoverInvType, hAddonId, now);
@@ -2655,9 +2582,9 @@ public sealed unsafe class Plugin : IDalamudPlugin
                 // ignore
             }
 
-            var asyncMiddleDown = IsVkDown(0x04); // VK_MBUTTON
-            var isMiddleByMask = ((mouseButtonId & 0x04) != 0) || ((dragDropMouseButtonId & 0x04) != 0);
-            var isMiddle = asyncMiddleDown || isMiddleByMask || middleDown == true;
+            bool asyncMiddleDown = IsVkDown(0x04); // VK_MBUTTON
+            bool isMiddleByMask = ((mouseButtonId & 0x04) != 0) || ((dragDropMouseButtonId & 0x04) != 0);
+            bool isMiddle = asyncMiddleDown || isMiddleByMask || middleDown == true;
 
             // Always log (rate-limited) in DebugMode so we can see which event types fire on MMB for this client.
             if (Configuration.DebugMode && now - lastReceiveEventDebugLogMs >= 250)
@@ -2681,9 +2608,9 @@ public sealed unsafe class Plugin : IDalamudPlugin
             if (!isMiddle)
                 return;
 
-            if (!TryGetDragDropInterfaceFromReceiveEvent(args, recv, eventType, eventData, out var addonId, out var ddi))
+            if (!TryGetDragDropInterfaceFromReceiveEvent(args, recv, eventType, eventData, out uint addonId, out AtkDragDropInterface* ddi))
                 return;
-            if (!TryGetSlotFromDragDropInterface(ddi, out var invType, out var slot))
+            if (!TryGetSlotFromDragDropInterface(ddi, out InventoryType invType, out int slot))
                 return;
 
             // Do not require a non-empty slot; "Sort" can be invoked from empty slots/spaces.
@@ -2693,7 +2620,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
             lastMiddleClickSortMs = now;
 
             // Prevent the underlying UI from processing the click further.
-            var atkEvent2 = (AtkEvent*)recv.AtkEvent;
+            AtkEvent* atkEvent2 = (AtkEvent*)recv.AtkEvent;
             if (atkEvent2 != null)
                 atkEvent2->SetEventIsHandled();
         }
@@ -2725,8 +2652,8 @@ public sealed unsafe class Plugin : IDalamudPlugin
             if (args is not AddonSetupArgs setup)
                 return;
 
-            var values = (AtkValue*)setup.AtkValues;
-            var count = (int)setup.AtkValueCount;
+            AtkValue* values = (AtkValue*)setup.AtkValues;
+            int count = (int)setup.AtkValueCount;
             if (values == null || count < 7)
                 return;
 
@@ -2736,7 +2663,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
             // Guard against cross-confirmation: only touch the prompt we intended (store/remove/sell).
             if (pendingNumericKind != PendingNumericKind.None)
             {
-                var prompt = values[6].Type is AtkValueType.String or AtkValueType.ManagedString ? ReadAtkValueString(values[6]) : string.Empty;
+                string prompt = values[6].Type is AtkValueType.String or AtkValueType.ManagedString ? ReadAtkValueString(values[6]) : string.Empty;
                 if (pendingNumericKind == PendingNumericKind.Store && !prompt.Contains("store", StringComparison.OrdinalIgnoreCase))
                     return;
                 if (pendingNumericKind == PendingNumericKind.Remove && !prompt.Contains("remove", StringComparison.OrdinalIgnoreCase))
@@ -2755,34 +2682,35 @@ public sealed unsafe class Plugin : IDalamudPlugin
                 return;
             }
 
-            var min = values[2].UInt;
-            var max = values[3].UInt;
-            var desired = max < min ? min : max;
+            uint min = values[2].UInt;
+            uint max = values[3].UInt;
+            uint desired = max < min ? min : max;
 
             // Log current/default if present.
             if (Configuration.DebugMode)
             {
-                var curStr = (count > 5 && values[5].Type == AtkValueType.UInt) ? values[5].UInt.ToString() : "n/a";
+                string curStr = values[5].Type == AtkValueType.UInt ? values[5].UInt.ToString() : "n/a";
                 Log.Information($"[QuickTransfer] InputNumeric PreSetup: min={min}, max={max}, default={values[4].UInt}, current={curStr}");
             }
 
             values[4].UInt = desired; // default
-            if (count > 5)
+            switch (values[5].Type)
             {
-                if (values[5].Type == AtkValueType.UInt)
+                case AtkValueType.UInt:
                     values[5].UInt = desired; // some layouts have current (UInt)
-                else if (values[5].Type is AtkValueType.String or AtkValueType.ManagedString or AtkValueType.String8)
+                    break;
+                case AtkValueType.String or AtkValueType.ManagedString or AtkValueType.String8:
                     WriteUtf8InPlace(values[5].String, desired.ToString()); // some builds use String current
+                    break;
             }
 
             if (Configuration.DebugMode)
             {
-                var prompt = values[6].Type is AtkValueType.String or AtkValueType.ManagedString ? ReadAtkValueString(values[6]) : string.Empty;
+                string prompt = values[6].Type is AtkValueType.String or AtkValueType.ManagedString ? ReadAtkValueString(values[6]) : string.Empty;
                 Log.Information($"[QuickTransfer] InputNumeric PreSetup: prompt='{prompt}', min={min}, max={max}, setDefault={desired}");
             }
-
         }
-        catch (Exception ex)
+        catch(Exception ex)
         {
             Log.Warning(ex, "[QuickTransfer] InputNumeric PreSetup failed.");
         }
@@ -2794,14 +2722,14 @@ public sealed unsafe class Plugin : IDalamudPlugin
         chosenText = string.Empty;
         chosenIndex = -1;
 
-        var agentAddonId = agent->AgentInterface.GetAddonId();
+        uint agentAddonId = agent->AgentInterface.GetAddonId();
         if (agentAddonId == 0)
             return false;
 
-        var addon = GetAddonById(agentAddonId);
+        AtkUnitBase* addon = GetAddonById(agentAddonId);
         if (addon == null)
         {
-            var cm = GameGui.GetAddonByName("ContextMenu", 1);
+            AtkUnitBasePtr cm = GameGui.GetAddonByName("ContextMenu");
             addon = (AtkUnitBase*)cm.Address;
         }
 
@@ -2811,9 +2739,8 @@ public sealed unsafe class Plugin : IDalamudPlugin
         return TryAutoSelectAndClose(agent, addon, mode, out chosenText, out chosenIndex);
     }
 
-    private bool TryAutoSelectAndClose(AgentInventoryContext* agent, AtkUnitBase* contextMenuAddon, ModifierMode mode, out string chosenText, out int chosenIndex)
-    {
-        return ContextMenuHandler.TryAutoSelectAndClose(
+    private bool TryAutoSelectAndClose(AgentInventoryContext* agent, AtkUnitBase* contextMenuAddon, ModifierMode mode, out string chosenText, out int chosenIndex) =>
+        ContextMenuHandler.TryAutoSelectAndClose(
             agent,
             contextMenuAddon,
             (ContextMenuHandler.ModifierMode)mode,
@@ -2821,7 +2748,6 @@ public sealed unsafe class Plugin : IDalamudPlugin
             out chosenText,
             out chosenIndex,
             ref pendingCloseContextMenuAtMs);
-    }
 
     // Use ContextMenuHandler
     private bool TrySelectSortAndClose(AgentInventoryContext* agent, AtkUnitBase* contextMenuAddon, out string chosenText, out int chosenIndex)
@@ -2840,11 +2766,11 @@ public sealed unsafe class Plugin : IDalamudPlugin
             if (!IsPlayerInventoryType(sourceType))
                 return false;
 
-            if (!TryGetItemInfo(sourceType, (int)sourceSlot, out var itemId, out var isHq, out var qty))
+            if (!TryGetItemInfo(sourceType, (int)sourceSlot, out uint itemId, out bool isHq, out uint qty))
                 return false;
 
-            var now = Environment.TickCount64;
-            companyChestDeposit = new CompanyChestDepositState
+            long now = Environment.TickCount64;
+            companyChestDeposit = new()
             {
                 Active = true,
                 SourceType = sourceType,
@@ -2855,7 +2781,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
                 ExpiresAtMs = now + 12000,
                 Steps = 0,
                 LastQty = qty,
-                WaitForQtyChangeUntilMs = 0,
+                WaitForQtyChangeUntilMs = 0
             };
             return true;
         }
@@ -2887,10 +2813,10 @@ public sealed unsafe class Plugin : IDalamudPlugin
         // This prevents spamming the same move over and over when the game hasn't applied it yet.
         if (companyChestDeposit.WaitForQtyChangeUntilMs > 0 && now <= companyChestDeposit.WaitForQtyChangeUntilMs)
         {
-            if (TryGetVisibleAddon(InputNumericAddonName, out _))
+            if (TryGetVisibleAddon(InputNumericAddonName, out AtkUnitBase* _))
                 return;
 
-            if (TryGetItemInfo(companyChestDeposit.SourceType, (int)companyChestDeposit.SourceSlot, out var _, out var _, out var qNow) &&
+            if (TryGetItemInfo(companyChestDeposit.SourceType, (int)companyChestDeposit.SourceSlot, out uint _, out bool _, out uint qNow) &&
                 qNow != companyChestDeposit.LastQty)
             {
                 companyChestDeposit.LastQty = qNow;
@@ -2903,13 +2829,13 @@ public sealed unsafe class Plugin : IDalamudPlugin
         }
 
         // Don't issue a new move while the quantity dialog is open.
-        if (TryGetVisibleAddon(InputNumericAddonName, out _))
+        if (TryGetVisibleAddon(InputNumericAddonName, out AtkUnitBase* _))
             return;
 
         if (now < companyChestDeposit.NextAttemptAtMs)
             return;
 
-        if (!TryGetItemInfo(companyChestDeposit.SourceType, (int)companyChestDeposit.SourceSlot, out var itemId, out var isHq, out var qty) ||
+        if (!TryGetItemInfo(companyChestDeposit.SourceType, (int)companyChestDeposit.SourceSlot, out uint itemId, out bool isHq, out uint qty) ||
             itemId == 0 ||
             qty == 0)
         {
@@ -2924,18 +2850,18 @@ public sealed unsafe class Plugin : IDalamudPlugin
             return;
         }
 
-        var pages = GetCompanyChestInventoryTypes();
+        InventoryType[] pages = GetCompanyChestInventoryTypes();
         if (pages.Length == 0)
         {
             companyChestDeposit.Active = false;
             return;
         }
 
-        var maxStack = GetItemStackSize(itemId);
-        var needsQuantityConfirm = qty > 1 && maxStack > 1;
+        uint maxStack = GetItemStackSize(itemId);
+        bool needsQuantityConfirm = qty > 1 && maxStack > 1;
 
         // Prefer stacking into an existing stack; otherwise use the first empty slot.
-        if (!TryFindCompanyChestBestStackSlot(pages, itemId, isHq, maxStack, out var destType, out var destSlot) &&
+        if (!TryFindCompanyChestBestStackSlot(pages, itemId, isHq, maxStack, out InventoryType destType, out uint destSlot) &&
             !TryFindCompanyChestFirstEmptySlot(pages, out destType, out destSlot))
         {
             companyChestDeposit.Active = false;
@@ -2988,10 +2914,10 @@ public sealed unsafe class Plugin : IDalamudPlugin
 
         companyChestBusyHits = 0;
 
-        var ownerAddonId = 0u;
+        uint ownerAddonId = 0u;
         try
         {
-            if (TryGetVisibleAddon(FreeCompanyChestAddonName, out var fcc, WideAddonSearchMaxIndex) && fcc != null)
+            if (TryGetVisibleAddon(FreeCompanyChestAddonName, out AtkUnitBase* fcc, WideAddonSearchMaxIndex) && fcc != null)
                 ownerAddonId = fcc->Id;
         }
         catch
@@ -2999,11 +2925,11 @@ public sealed unsafe class Plugin : IDalamudPlugin
             // ignore
         }
 
-        var pages = GetCompanyChestInventoryTypes();
+        InventoryType[] pages = GetCompanyChestInventoryTypes();
         if (pages.Length == 0)
             return;
 
-        companyChestOrganize = new CompanyChestOrganizeState
+        companyChestOrganize = new()
         {
             Active = true,
             OwnerAddonId = ownerAddonId,
@@ -3015,7 +2941,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
             WaitingForApply = false,
             WaitUntilMs = 0,
             WaitStuckCount = 0,
-            WaitObservedChangeAtMs = 0,
+            WaitObservedChangeAtMs = 0
         };
 
         if (Configuration.DebugMode)
@@ -3055,10 +2981,10 @@ public sealed unsafe class Plugin : IDalamudPlugin
 
         companyChestBusyHits = 0;
 
-        var ownerAddonId = 0u;
+        uint ownerAddonId = 0u;
         try
         {
-            if (TryGetVisibleAddon(FreeCompanyChestAddonName, out var fcc, WideAddonSearchMaxIndex) && fcc != null)
+            if (TryGetVisibleAddon(FreeCompanyChestAddonName, out AtkUnitBase* fcc, WideAddonSearchMaxIndex) && fcc != null)
                 ownerAddonId = fcc->Id;
         }
         catch
@@ -3066,7 +2992,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
             // ignore
         }
 
-        companyChestOrganize = new CompanyChestOrganizeState
+        companyChestOrganize = new()
         {
             Active = true,
             OwnerAddonId = ownerAddonId,
@@ -3074,11 +3000,11 @@ public sealed unsafe class Plugin : IDalamudPlugin
             ExpiresAtMs = now + 60000,
             Steps = 0,
             Phase = 0, // Stack merge -> compact -> sort
-            Pages = new[] { selectedPage },
+            Pages = [selectedPage],
             WaitingForApply = false,
             WaitUntilMs = 0,
             WaitStuckCount = 0,
-            WaitObservedChangeAtMs = 0,
+            WaitObservedChangeAtMs = 0
         };
 
         if (Configuration.DebugMode)
@@ -3105,12 +3031,12 @@ public sealed unsafe class Plugin : IDalamudPlugin
         (int stepDelayMs, int stabilizeMs, int applyTimeoutMs, int noApplyBackoffMs, int pageRetryMs, int numericStepDelayMs, int numericApplyTimeoutMs) GetTimings()
         {
             // Start fast, but if the server begins rejecting actions (busyHits>0), automatically slow down.
-            var tier = Math.Clamp(companyChestBusyHits, 0, 2);
+            int tier = Math.Clamp(companyChestBusyHits, 0, 2);
             return tier switch
             {
                 0 => (750, 300, 1300, 650, 350, 1500, 3200),
                 1 => (1000, 450, 1800, 900, 500, 2200, 4500),
-                _ => (1300, 650, 2500, 1200, 750, 3000, 6000),
+                var _ => (1300, 650, 2500, 1200, 750, 3000, 6000)
             };
         }
 
@@ -3135,7 +3061,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
             return;
         }
 
-        if (TryGetVisibleAddon(InputNumericAddonName, out _))
+        if (TryGetVisibleAddon(InputNumericAddonName, out AtkUnitBase* _))
         {
             LogSkip("InputNumeric visible");
             return;
@@ -3144,12 +3070,12 @@ public sealed unsafe class Plugin : IDalamudPlugin
         // If the selected page isn't loaded yet (loading spinner), wait.
         try
         {
-            var pages0 = companyChestOrganize.Pages ?? Array.Empty<InventoryType>();
-            var inv0 = InventoryManager.Instance();
+            InventoryType[] pages0 = companyChestOrganize.Pages;
+            InventoryManager* inv0 = InventoryManager.Instance();
             if (inv0 != null && pages0.Length > 0)
             {
-                var allLoaded = true;
-                foreach (var p in pages0)
+                bool allLoaded = true;
+                foreach(InventoryType p in pages0)
                 {
                     if (!IsContainerLoaded(inv0, p))
                     {
@@ -3168,7 +3094,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
 
                 if (!allLoaded)
                 {
-                    var t = GetTimings();
+                    (int stepDelayMs, int stabilizeMs, int applyTimeoutMs, int noApplyBackoffMs, int pageRetryMs, int numericStepDelayMs, int numericApplyTimeoutMs) t = GetTimings();
                     companyChestOrganize.NextAttemptAtMs = now + t.pageRetryMs;
                     LogSkip($"pages not ready yet; waiting. pages=[{string.Join(", ", pages0)}]");
                     return;
@@ -3185,18 +3111,18 @@ public sealed unsafe class Plugin : IDalamudPlugin
         {
             try
             {
-                var inv = InventoryManager.Instance();
+                InventoryManager* inv = InventoryManager.Instance();
                 if (inv != null)
                 {
-                    var s = inv->GetInventorySlot(companyChestOrganize.WaitSrcType, (int)companyChestOrganize.WaitSrcSlot);
-                    var d = inv->GetInventorySlot(companyChestOrganize.WaitDstType, (int)companyChestOrganize.WaitDstSlot);
+                    InventoryItem* s = inv->GetInventorySlot(companyChestOrganize.WaitSrcType, (int)companyChestOrganize.WaitSrcSlot);
+                    InventoryItem* d = inv->GetInventorySlot(companyChestOrganize.WaitDstType, (int)companyChestOrganize.WaitDstSlot);
 
-                    var sId = s != null ? s->ItemId : 0u;
-                    var sQty = s != null ? s->Quantity : 0;
-                    var dId = d != null ? d->ItemId : 0u;
-                    var dQty = d != null ? d->Quantity : 0;
+                    uint sId = s != null ? s->ItemId : 0u;
+                    int sQty = s != null ? s->Quantity : 0;
+                    uint dId = d != null ? d->ItemId : 0u;
+                    int dQty = d != null ? d->Quantity : 0;
 
-                    var applied =
+                    bool applied =
                         sId != companyChestOrganize.WaitSrcItemId ||
                         sQty != companyChestOrganize.WaitSrcQty ||
                         dId != companyChestOrganize.WaitDstItemId ||
@@ -3204,7 +3130,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
 
                     if (applied)
                     {
-                        var t = GetTimings();
+                        (int stepDelayMs, int stabilizeMs, int applyTimeoutMs, int noApplyBackoffMs, int pageRetryMs, int numericStepDelayMs, int numericApplyTimeoutMs) t = GetTimings();
                         // We saw a change; wait a short stabilization window in case the server rejects and rolls back.
                         if (companyChestOrganize.WaitObservedChangeAtMs == 0)
                         {
@@ -3229,7 +3155,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
                     {
                         // We previously saw a change, but now we're back to the pre-snapshot: likely a server rejection rollback.
                         companyChestBusyHits = Math.Min(companyChestBusyHits + 1, 10);
-                        var backoffMs = (long)Math.Min(60000, 5000 * (1 << Math.Min(companyChestBusyHits - 1, 4)));
+                        long backoffMs = Math.Min(60000, 5000 * (1 << Math.Min(companyChestBusyHits - 1, 4)));
                         companyChestBusyUntilMs = Math.Max(companyChestBusyUntilMs, now + backoffMs);
                         companyChestOrganize.WaitingForApply = false;
                         companyChestOrganize.WaitObservedChangeAtMs = 0;
@@ -3267,7 +3193,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
                         }
 
                         // Back off a bit and retry.
-                        var t = GetTimings();
+                        (int stepDelayMs, int stabilizeMs, int applyTimeoutMs, int noApplyBackoffMs, int pageRetryMs, int numericStepDelayMs, int numericApplyTimeoutMs) t = GetTimings();
                         companyChestOrganize.NextAttemptAtMs = now + t.noApplyBackoffMs;
                         LogSkip("no apply observed; backoff");
                         return;
@@ -3286,7 +3212,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
             return;
         }
 
-        var pages = companyChestOrganize.Pages ?? Array.Empty<InventoryType>();
+        InventoryType[] pages = companyChestOrganize.Pages;
         if (pages.Length == 0)
         {
             companyChestOrganize.Active = false;
@@ -3296,16 +3222,16 @@ public sealed unsafe class Plugin : IDalamudPlugin
         // Phase 0: merge stacks where possible. (Disabled for FC chest by starting at Phase=1.)
         if (companyChestOrganize.Phase == 0)
         {
-            if (TryFindCompanyChestMergeMove(pages, out var srcType, out var srcSlot, out var dstType, out var dstSlot, out var needsNumeric))
+            if (TryFindCompanyChestMergeMove(pages, out InventoryType srcType, out uint srcSlot, out InventoryType dstType, out uint dstSlot, out bool needsNumeric))
             {
                 // Snapshot BEFORE issuing the move (so we can detect when it applies).
-                var preSrcId = 0u;
-                var preDstId = 0u;
-                var preSrcQty = 0;
-                var preDstQty = 0;
+                uint preSrcId = 0u;
+                uint preDstId = 0u;
+                int preSrcQty = 0;
+                int preDstQty = 0;
                 try
                 {
-                    var inv = InventoryManager.Instance();
+                    InventoryManager* inv = InventoryManager.Instance();
                     if (inv != null)
                     {
                         TryGetSlotSnapshot(inv, srcType, srcSlot, out preSrcId, out preSrcQty);
@@ -3332,7 +3258,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
                 companyChestOrganize.WaitDstSlot = dstSlot;
                 companyChestOrganize.WaitDstItemId = preDstId;
                 companyChestOrganize.WaitDstQty = preDstQty;
-                var t = GetTimings();
+                (int stepDelayMs, int stabilizeMs, int applyTimeoutMs, int noApplyBackoffMs, int pageRetryMs, int numericStepDelayMs, int numericApplyTimeoutMs) t = GetTimings();
                 companyChestOrganize.WaitUntilMs = now + (needsNumeric ? t.numericApplyTimeoutMs : t.applyTimeoutMs);
                 companyChestOrganize.WaitObservedChangeAtMs = 0;
 
@@ -3350,7 +3276,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
                     pendingCompanyChestNumericValueSetAtMs = 0;
                     pendingCompanyChestNumericDesired = 0;
                     pendingCompanyChestNumericHalf = false;
-                    ArmSuppressInputNumeric(now, 1500);
+                    ArmSuppressInputNumeric(now);
                 }
 
                 if (Configuration.DebugMode)
@@ -3363,16 +3289,16 @@ public sealed unsafe class Plugin : IDalamudPlugin
         }
 
         // Phase 1: compact items to fill empty slots from the start.
-        if (TryFindCompanyChestCompactionMove(pages, out var cSrcType, out var cSrcSlot, out var cDstType, out var cDstSlot))
+        if (TryFindCompanyChestCompactionMove(pages, out InventoryType cSrcType, out uint cSrcSlot, out InventoryType cDstType, out uint cDstSlot))
         {
             // Snapshot BEFORE issuing the move (so we can detect when it applies).
-            var preSrcId = 0u;
-            var preDstId = 0u;
-            var preSrcQty = 0;
-            var preDstQty = 0;
+            uint preSrcId = 0u;
+            uint preDstId = 0u;
+            int preSrcQty = 0;
+            int preDstQty = 0;
             try
             {
-                var inv = InventoryManager.Instance();
+                InventoryManager* inv = InventoryManager.Instance();
                 if (inv != null)
                 {
                     TryGetSlotSnapshot(inv, cSrcType, cSrcSlot, out preSrcId, out preSrcQty);
@@ -3384,7 +3310,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
                 // ignore
             }
 
-            if (!TryCompanyChestMoveItem(cSrcType, cSrcSlot, cDstType, cDstSlot, keepAliveForInputNumeric: false))
+            if (!TryCompanyChestMoveItem(cSrcType, cSrcSlot, cDstType, cDstSlot, false))
             {
                 companyChestOrganize.Active = false;
                 return;
@@ -3399,7 +3325,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
             companyChestOrganize.WaitDstSlot = cDstSlot;
             companyChestOrganize.WaitDstItemId = preDstId;
             companyChestOrganize.WaitDstQty = preDstQty;
-            var t = GetTimings();
+            (int stepDelayMs, int stabilizeMs, int applyTimeoutMs, int noApplyBackoffMs, int pageRetryMs, int numericStepDelayMs, int numericApplyTimeoutMs) t = GetTimings();
             companyChestOrganize.WaitUntilMs = now + t.applyTimeoutMs;
             companyChestOrganize.WaitObservedChangeAtMs = 0;
 
@@ -3418,16 +3344,16 @@ public sealed unsafe class Plugin : IDalamudPlugin
         // Phase 2: reorder stacks by (UI category, itemId, HQ), mimicking the feel of Sort/itemsort.
         if (companyChestOrganize.Phase == 2)
         {
-            if (TryFindCompanyChestSortMove(pages, out var sSrcType, out var sSrcSlot, out var sDstType, out var sDstSlot))
+            if (TryFindCompanyChestSortMove(pages, out InventoryType sSrcType, out uint sSrcSlot, out InventoryType sDstType, out uint sDstSlot))
             {
                 // Snapshot BEFORE issuing the move (so we can detect when it applies).
-                var preSrcId = 0u;
-                var preDstId = 0u;
-                var preSrcQty = 0;
-                var preDstQty = 0;
+                uint preSrcId = 0u;
+                uint preDstId = 0u;
+                int preSrcQty = 0;
+                int preDstQty = 0;
                 try
                 {
-                    var inv = InventoryManager.Instance();
+                    InventoryManager* inv = InventoryManager.Instance();
                     if (inv != null)
                     {
                         TryGetSlotSnapshot(inv, sSrcType, sSrcSlot, out preSrcId, out preSrcQty);
@@ -3439,7 +3365,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
                     // ignore
                 }
 
-                if (!TryCompanyChestMoveItem(sSrcType, sSrcSlot, sDstType, sDstSlot, keepAliveForInputNumeric: false))
+                if (!TryCompanyChestMoveItem(sSrcType, sSrcSlot, sDstType, sDstSlot, false))
                 {
                     companyChestOrganize.Active = false;
                     return;
@@ -3454,7 +3380,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
                 companyChestOrganize.WaitDstSlot = sDstSlot;
                 companyChestOrganize.WaitDstItemId = preDstId;
                 companyChestOrganize.WaitDstQty = preDstQty;
-                var t = GetTimings();
+                (int stepDelayMs, int stabilizeMs, int applyTimeoutMs, int noApplyBackoffMs, int pageRetryMs, int numericStepDelayMs, int numericApplyTimeoutMs) t = GetTimings();
                 companyChestOrganize.WaitUntilMs = now + t.applyTimeoutMs;
                 companyChestOrganize.WaitObservedChangeAtMs = 0;
 
@@ -3487,37 +3413,37 @@ public sealed unsafe class Plugin : IDalamudPlugin
         dstSlot = 0;
         needsNumeric = false;
 
-        var inv = InventoryManager.Instance();
+        InventoryManager* inv = InventoryManager.Instance();
         if (inv == null)
             return false;
 
         const int slotCap = 80;
 
         // Find a destination stack with free space, then a later source stack of same item to merge.
-        foreach (var dt in pages)
+        foreach(InventoryType dt in pages)
         {
-            for (var di = 0; di < slotCap; di++)
+            for(int di = 0; di < slotCap; di++)
             {
-                var d = inv->GetInventorySlot(dt, di);
+                InventoryItem* d = inv->GetInventorySlot(dt, di);
                 if (d == null)
                     break;
                 if (d->ItemId == 0 || d->Quantity <= 0)
                     continue;
 
-                var itemId = d->ItemId;
-                var isHq = d->Flags.HasFlag(InventoryItem.ItemFlags.HighQuality);
-                var maxStack = GetItemStackSize(itemId);
+                uint itemId = d->ItemId;
+                bool isHq = d->Flags.HasFlag(InventoryItem.ItemFlags.HighQuality);
+                uint maxStack = GetItemStackSize(itemId);
                 if (maxStack <= 1)
                     continue;
 
-                var free = (int)maxStack - d->Quantity;
+                int free = (int)maxStack - d->Quantity;
                 if (free <= 0)
                     continue;
 
                 // Find a later stack to merge into this one.
-                var foundDest = false;
-                var destGlobalIndex = 0;
-                for (var pi = 0; pi < pages.Length; pi++)
+                bool foundDest = false;
+                int destGlobalIndex = 0;
+                for(int pi = 0; pi < pages.Length; pi++)
                 {
                     if (pages[pi] != dt) continue;
                     destGlobalIndex = pi * slotCap + di;
@@ -3527,23 +3453,23 @@ public sealed unsafe class Plugin : IDalamudPlugin
                 if (!foundDest)
                     continue;
 
-                for (var p = 0; p < pages.Length; p++)
+                for(int p = 0; p < pages.Length; p++)
                 {
-                    var st = pages[p];
-                    for (var si = 0; si < slotCap; si++)
+                    InventoryType st = pages[p];
+                    for(int si = 0; si < slotCap; si++)
                     {
-                        var s = inv->GetInventorySlot(st, si);
+                        InventoryItem* s = inv->GetInventorySlot(st, si);
                         if (s == null)
                             break;
                         if (s->ItemId == 0 || s->Quantity <= 0)
                             continue;
                         if (s->ItemId != itemId)
                             continue;
-                        var sHq = s->Flags.HasFlag(InventoryItem.ItemFlags.HighQuality);
+                        bool sHq = s->Flags.HasFlag(InventoryItem.ItemFlags.HighQuality);
                         if (sHq != isHq)
                             continue;
 
-                        var srcGlobalIndex = p * slotCap + si;
+                        int srcGlobalIndex = p * slotCap + si;
                         if (srcGlobalIndex <= destGlobalIndex)
                             continue;
                         if (st == dt && si == di)
@@ -3578,32 +3504,32 @@ public sealed unsafe class Plugin : IDalamudPlugin
         dstType = default;
         dstSlot = 0;
 
-        var inv = InventoryManager.Instance();
+        InventoryManager* inv = InventoryManager.Instance();
         if (inv == null)
             return false;
 
         const int slotCap = 80;
 
         // Find first empty, then next non-empty after it.
-        for (var dp = 0; dp < pages.Length; dp++)
+        for(int dp = 0; dp < pages.Length; dp++)
         {
-            var dt = pages[dp];
-            for (var di = 0; di < slotCap; di++)
+            InventoryType dt = pages[dp];
+            for(int di = 0; di < slotCap; di++)
             {
-                var d = inv->GetInventorySlot(dt, di);
+                InventoryItem* d = inv->GetInventorySlot(dt, di);
                 if (d == null)
                     break;
                 if (d->ItemId != 0)
                     continue;
 
                 // Found empty destination.
-                for (var sp = dp; sp < pages.Length; sp++)
+                for(int sp = dp; sp < pages.Length; sp++)
                 {
-                    var st = pages[sp];
-                    var start = sp == dp ? di + 1 : 0;
-                    for (var si = start; si < slotCap; si++)
+                    InventoryType st = pages[sp];
+                    int start = sp == dp ? di + 1 : 0;
+                    for(int si = start; si < slotCap; si++)
                     {
-                        var s = inv->GetInventorySlot(st, si);
+                        InventoryItem* s = inv->GetInventorySlot(st, si);
                         if (s == null)
                             break;
                         if (s->ItemId == 0 || s->Quantity <= 0)
@@ -3624,28 +3550,6 @@ public sealed unsafe class Plugin : IDalamudPlugin
         return false;
     }
 
-    private readonly struct ChestSortKey : IComparable<ChestSortKey>
-    {
-        public readonly uint Category;
-        public readonly uint ItemId;
-        public readonly byte Hq;
-        public ChestSortKey(uint category, uint itemId, bool isHq)
-        {
-            Category = category;
-            ItemId = itemId;
-            Hq = (byte)(isHq ? 1 : 0);
-        }
-
-        public int CompareTo(ChestSortKey other)
-        {
-            var c = Category.CompareTo(other.Category);
-            if (c != 0) return c;
-            c = ItemId.CompareTo(other.ItemId);
-            if (c != 0) return c;
-            return Hq.CompareTo(other.Hq); // NQ first, HQ after
-        }
-    }
-
     private static bool TryFindCompanyChestSortMove(
         InventoryType[] pages,
         out InventoryType srcType,
@@ -3661,8 +3565,8 @@ public sealed unsafe class Plugin : IDalamudPlugin
         if (pages.Length != 1)
             return false;
 
-        var page = pages[0];
-        var inv = InventoryManager.Instance();
+        InventoryType page = pages[0];
+        InventoryManager* inv = InventoryManager.Instance();
         if (inv == null)
             return false;
 
@@ -3672,16 +3576,16 @@ public sealed unsafe class Plugin : IDalamudPlugin
         if (c == null || !c->IsLoaded || c->Size <= 0)
             return false;
 
-        var size = (int)c->Size;
+        int size = c->Size;
         if (size <= 1)
             return false;
 
         // Build keys for current slots.
-        var keys = new ChestSortKey[size];
-        var empty = new bool[size];
-        for (var i = 0; i < size; i++)
+        ChestSortKey[] keys = new ChestSortKey[size];
+        bool[] empty = new bool[size];
+        for(int i = 0; i < size; i++)
         {
-            var it = c->GetInventorySlot(i);
+            InventoryItem* it = c->GetInventorySlot(i);
             if (it == null || it->ItemId == 0 || it->Quantity <= 0)
             {
                 empty[i] = true;
@@ -3689,17 +3593,17 @@ public sealed unsafe class Plugin : IDalamudPlugin
                 continue;
             }
 
-            var id = it->ItemId;
-            var hq = it->Flags.HasFlag(InventoryItem.ItemFlags.HighQuality);
-            var cat = GetItemUiCategory(id);
-            keys[i] = new ChestSortKey(cat, id, hq);
+            uint id = it->ItemId;
+            bool hq = it->Flags.HasFlag(InventoryItem.ItemFlags.HighQuality);
+            uint cat = GetItemUiCategory(id);
+            keys[i] = new(cat, id, hq);
         }
 
         // Ensure empties are at the end (safety; compaction phase should mostly handle this).
-        for (var i = 0; i < size; i++)
+        for(int i = 0; i < size; i++)
         {
             if (!empty[i]) continue;
-            for (var j = i + 1; j < size; j++)
+            for(int j = i + 1; j < size; j++)
             {
                 if (!empty[j])
                 {
@@ -3715,13 +3619,13 @@ public sealed unsafe class Plugin : IDalamudPlugin
 
         // Selection-sort step: for first index i, if there is a smaller key later, swap/move it into i.
         // This uses HandleItemMove's swap behavior for occupied destinations.
-        for (var i = 0; i < size; i++)
+        for(int i = 0; i < size; i++)
         {
             if (empty[i])
                 break;
 
-            var best = i;
-            for (var j = i + 1; j < size; j++)
+            int best = i;
+            for(int j = i + 1; j < size; j++)
             {
                 if (empty[j]) break; // empties at end
                 if (keys[j].CompareTo(keys[best]) < 0)
@@ -3748,15 +3652,15 @@ public sealed unsafe class Plugin : IDalamudPlugin
         uint destSlot,
         bool keepAliveForInputNumeric)
     {
-        var module = RaptureAtkModule.Instance();
+        RaptureAtkModule* module = RaptureAtkModule.Instance();
         if (module == null)
             return false;
 
         // IMPORTANT:
         // HandleItemMove expects InventoryType values (e.g. Inventory1=0, FreeCompanyPage1=20000),
         // not "container ids" like 48/57.
-        var srcInvType = (uint)sourceType;
-        var dstInvType = (uint)destType;
+        uint srcInvType = (uint)sourceType;
+        uint dstInvType = (uint)destType;
 
         nint localValuesAlloc = 0;
         nint localRetAlloc = 0;
@@ -3769,12 +3673,20 @@ public sealed unsafe class Plugin : IDalamudPlugin
                 // Keep alive across the InputNumeric dialog.
                 if (pendingMoveOutValuePtr != 0)
                 {
-                    try { Marshal.FreeHGlobal(pendingMoveOutValuePtr); } catch { /* ignore */ }
+                    try { Marshal.FreeHGlobal(pendingMoveOutValuePtr); }
+                    catch
+                    {
+                        /* ignore */
+                    }
                     pendingMoveOutValuePtr = 0;
                 }
                 if (pendingMoveAtkValuesPtr != 0)
                 {
-                    try { Marshal.FreeHGlobal(pendingMoveAtkValuesPtr); } catch { /* ignore */ }
+                    try { Marshal.FreeHGlobal(pendingMoveAtkValuesPtr); }
+                    catch
+                    {
+                        /* ignore */
+                    }
                     pendingMoveAtkValuesPtr = 0;
                 }
 
@@ -3798,7 +3710,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
             ret->Type = AtkValueType.Int;
             ret->Int = 0;
 
-            for (var i = 0; i < 4; i++) values[i].Type = AtkValueType.UInt;
+            for(int i = 0; i < 4; i++) values[i].Type = AtkValueType.UInt;
             values[0].UInt = srcInvType;
             values[1].UInt = sourceSlot;
             values[2].UInt = dstInvType;
@@ -3808,179 +3720,38 @@ public sealed unsafe class Plugin : IDalamudPlugin
 
             if (Configuration.DebugMode)
             {
-                var inv = InventoryManager.Instance();
-                TryGetSlotSnapshot(inv, sourceType, sourceSlot, out var sId, out var sQty);
-                TryGetSlotSnapshot(inv, destType, destSlot, out var dId, out var dQty);
+                InventoryManager* inv = InventoryManager.Instance();
+                TryGetSlotSnapshot(inv, sourceType, sourceSlot, out uint sId, out int sQty);
+                TryGetSlotSnapshot(inv, destType, destSlot, out uint dId, out int dQty);
                 Log.Information(
                     $"[QuickTransfer] (MMB) CompanyChest HandleItemMove: retInt={ret->Int}, " +
                     $"src={sourceType} slot={sourceSlot} (id={sId},qty={sQty}) -> dst={destType} slot={destSlot} (id={dId},qty={dQty}), keepAlive={keepAliveForInputNumeric}");
             }
             return true;
         }
-        catch (Exception ex)
+        catch(Exception ex)
         {
             Log.Warning(ex, "[QuickTransfer] Company Chest HandleItemMove failed.");
             return false;
         }
         finally
         {
-            if (localRetAlloc != 0) { try { Marshal.FreeHGlobal(localRetAlloc); } catch { /* ignore */ } }
-            if (localValuesAlloc != 0) { try { Marshal.FreeHGlobal(localValuesAlloc); } catch { /* ignore */ } }
-        }
-    }
-
-    private static InventoryType[] GetSplitCandidateTypes(InventoryType sourceType)
-    {
-        // Prefer the same container first, then fall back to other pages of the same "kind".
-        // This mirrors the game's "Split" behavior which places the new stack into an empty slot in the same inventory group.
-        var tmp = new List<InventoryType>(capacity: 8);
-        void Add(InventoryType t)
-        {
-            for (var i = 0; i < tmp.Count; i++)
-                if (tmp[i] == t)
-                    return;
-            tmp.Add(t);
-        }
-
-        Add(sourceType);
-        if (IsPlayerInventoryType(sourceType))
-        {
-            Add(InventoryType.Inventory1);
-            Add(InventoryType.Inventory2);
-            Add(InventoryType.Inventory3);
-            Add(InventoryType.Inventory4);
-        }
-        else if (IsSaddlebagType(sourceType))
-        {
-            Add(InventoryType.SaddleBag1);
-            Add(InventoryType.SaddleBag2);
-            Add(InventoryType.PremiumSaddleBag1);
-            Add(InventoryType.PremiumSaddleBag2);
-        }
-        else if (IsRetainerType(sourceType))
-        {
-            Add(InventoryType.RetainerPage1);
-            Add(InventoryType.RetainerPage2);
-            Add(InventoryType.RetainerPage3);
-            Add(InventoryType.RetainerPage4);
-            Add(InventoryType.RetainerPage5);
-            Add(InventoryType.RetainerPage6);
-            Add(InventoryType.RetainerPage7);
-        }
-
-        return tmp.ToArray();
-    }
-
-    private static bool TryFindFirstEmptySlotForSplit(
-        InventoryManager* inv,
-        InventoryType[] candidates,
-        out InventoryType destType,
-        out uint destSlot)
-    {
-        destType = default;
-        destSlot = 0;
-        if (inv == null || candidates.Length == 0)
-            return false;
-
-        const int slotCap = 80;
-        foreach (var t in candidates)
-        {
-            if (!IsContainerLoaded(inv, t))
-                continue;
-
-            for (var i = 0; i < slotCap; i++)
+            if (localRetAlloc != 0)
             {
-                var it = inv->GetInventorySlot(t, i);
-                if (it == null)
-                    break;
-                if (it->ItemId == 0)
+                try { Marshal.FreeHGlobal(localRetAlloc); }
+                catch
                 {
-                    destType = t;
-                    destSlot = (uint)i;
-                    return true;
+                    /* ignore */
                 }
             }
-        }
-
-        return false;
-    }
-
-    private bool TryStartSplitHalfMove(
-        InventoryType sourceType,
-        uint sourceSlot,
-        long now,
-        out string reason)
-    {
-        reason = string.Empty;
-        try
-        {
-            // Only supported for inventory-like containers.
-            if (!IsPlayerInventoryType(sourceType) && !IsSaddlebagType(sourceType) && !IsRetainerType(sourceType))
+            if (localValuesAlloc != 0)
             {
-                reason = "unsupported container";
-                return false;
+                try { Marshal.FreeHGlobal(localValuesAlloc); }
+                catch
+                {
+                    /* ignore */
+                }
             }
-
-            if (TryGetVisibleAddon(InputNumericAddonName, out _))
-            {
-                reason = "InputNumeric visible";
-                return false;
-            }
-
-            if (!TryGetItemInfo(sourceType, (int)sourceSlot, out var itemId, out _, out var qty) || qty <= 1)
-            {
-                reason = "no stack";
-                return false;
-            }
-
-            var maxStack = GetItemStackSize(itemId);
-            if (maxStack <= 1)
-            {
-                reason = "not stackable";
-                return false;
-            }
-
-            var inv = InventoryManager.Instance();
-            if (inv == null)
-            {
-                reason = "InventoryManager null";
-                return false;
-            }
-
-            var candidates = GetSplitCandidateTypes(sourceType);
-            if (!TryFindFirstEmptySlotForSplit(inv, candidates, out var destType, out var destSlot))
-            {
-                reason = "no empty slot";
-                return false;
-            }
-
-            // Trigger a move to an empty slot; the game will prompt for quantity.
-            if (!TryCompanyChestMoveItem(sourceType, sourceSlot, destType, destSlot, keepAliveForInputNumeric: true))
-            {
-                reason = "HandleItemMove failed";
-                return false;
-            }
-
-            // Auto-confirm half (best-effort). We reuse the existing InputNumeric handler.
-            if (Configuration.AutoConfirmCompanyChestQuantity)
-            {
-                pendingCompanyChestNumericConfirmUntilMs = now + 1500;
-                pendingCompanyChestNumericConfirmAttempts = 0;
-                pendingCompanyChestNumericArmed = true;
-                pendingNumericKind = PendingNumericKind.Move;
-                pendingCompanyChestNumericValueSet = false;
-                pendingCompanyChestNumericValueSetAtMs = 0;
-                pendingCompanyChestNumericDesired = 0;
-                pendingCompanyChestNumericHalf = true;
-            }
-
-            reason = $"dst={destType} slot={destSlot}";
-            return true;
-        }
-        catch
-        {
-            reason = "exception";
-            return false;
         }
     }
 
@@ -3995,16 +3766,16 @@ public sealed unsafe class Plugin : IDalamudPlugin
         if (pages.Length == 0)
             return false;
 
-        var inv = InventoryManager.Instance();
+        InventoryManager* inv = InventoryManager.Instance();
         if (inv == null)
             return false;
 
         const int slotCap = 80;
-        foreach (var t in pages)
+        foreach(InventoryType t in pages)
         {
-            for (var i = 0; i < slotCap; i++)
+            for(int i = 0; i < slotCap; i++)
             {
-                var item = inv->GetInventorySlot(t, i);
+                InventoryItem* item = inv->GetInventorySlot(t, i);
                 if (item == null)
                     break;
                 if (item->ItemId == 0)
@@ -4033,32 +3804,32 @@ public sealed unsafe class Plugin : IDalamudPlugin
         if (pages.Length == 0 || itemId == 0 || maxStack <= 1)
             return false;
 
-        var inv = InventoryManager.Instance();
+        InventoryManager* inv = InventoryManager.Instance();
         if (inv == null)
             return false;
 
         const int slotCap = 80;
-        var bestFree = 0;
-        foreach (var t in pages)
+        int bestFree = 0;
+        foreach(InventoryType t in pages)
         {
-            for (var i = 0; i < slotCap; i++)
+            for(int i = 0; i < slotCap; i++)
             {
-                var it = inv->GetInventorySlot(t, i);
+                InventoryItem* it = inv->GetInventorySlot(t, i);
                 if (it == null)
                     break;
 
                 if (it->ItemId != itemId)
                     continue;
 
-                var hq = it->Flags.HasFlag(InventoryItem.ItemFlags.HighQuality);
+                bool hq = it->Flags.HasFlag(InventoryItem.ItemFlags.HighQuality);
                 if (hq != isHq)
                     continue;
 
-                var qty = it->Quantity;
+                int qty = it->Quantity;
                 if (qty <= 0)
                     continue;
 
-                var free = (int)maxStack - qty;
+                int free = (int)maxStack - qty;
                 if (free <= 0)
                     continue;
 
@@ -4083,12 +3854,12 @@ public sealed unsafe class Plugin : IDalamudPlugin
             if (inputNumeric->AtkValues == null || inputNumeric->AtkValuesCount < 7)
                 return false;
 
-            var minValue = inputNumeric->AtkValues + 2;
-            var maxValue = inputNumeric->AtkValues + 3;
-            var defaultValue = inputNumeric->AtkValues + 4;
-            var currentValue = inputNumeric->AtkValuesCount > 5 ? (inputNumeric->AtkValues + 5) : null;
-            var promptVal = inputNumeric->AtkValues + 6;
-            var prompt = promptVal->Type is AtkValueType.String or AtkValueType.ManagedString ? ReadAtkValueString(*promptVal) : string.Empty;
+            AtkValue* minValue = inputNumeric->AtkValues + 2;
+            AtkValue* maxValue = inputNumeric->AtkValues + 3;
+            AtkValue* defaultValue = inputNumeric->AtkValues + 4;
+            AtkValue* currentValue = inputNumeric->AtkValuesCount > 5 ? (inputNumeric->AtkValues + 5) : null;
+            AtkValue* promptVal = inputNumeric->AtkValues + 6;
+            string prompt = promptVal->Type is AtkValueType.String or AtkValueType.ManagedString ? ReadAtkValueString(*promptVal) : string.Empty;
 
             // Guard: only confirm prompts we expect.
             if (kind == PendingNumericKind.Store && !prompt.Contains("store", StringComparison.OrdinalIgnoreCase))
@@ -4114,8 +3885,8 @@ public sealed unsafe class Plugin : IDalamudPlugin
             if (minValue->Type != AtkValueType.UInt || maxValue->Type != AtkValueType.UInt || defaultValue->Type != AtkValueType.UInt)
                 return false;
 
-            var min = minValue->UInt;
-            var max = maxValue->UInt;
+            uint min = minValue->UInt;
+            uint max = maxValue->UInt;
 
             // Split dialogs are localized and can also be emitted by InventoryExpansion without "split" in the prompt.
             // Accept if either:
@@ -4123,9 +3894,9 @@ public sealed unsafe class Plugin : IDalamudPlugin
             // - max matches the expected qty-1 we recorded when arming the Split.
             if (kind == PendingNumericKind.Split && !prompt.Contains("split", StringComparison.OrdinalIgnoreCase))
             {
-                var nowMs = Environment.TickCount64;
-                var expectedMax = pendingSplitExpectedMax;
-                var okByExpected = expectedMax != 0 && nowMs <= pendingSplitExpectedUntilMs && max == expectedMax;
+                long nowMs = Environment.TickCount64;
+                uint expectedMax = pendingSplitExpectedMax;
+                bool okByExpected = expectedMax != 0 && nowMs <= pendingSplitExpectedUntilMs && max == expectedMax;
                 if (!okByExpected)
                     return false;
             }
@@ -4161,9 +3932,9 @@ public sealed unsafe class Plugin : IDalamudPlugin
 
             pendingCompanyChestNumericDesired = desired;
 
-            var beforeDefault = defaultValue->UInt;
-            var beforeCurrentUInt = (currentValue != null && currentValue->Type == AtkValueType.UInt) ? currentValue->UInt : 0U;
-            var beforeCurrentStr = (currentValue != null && currentValue->Type is (AtkValueType.String or AtkValueType.ManagedString or AtkValueType.String8))
+            uint beforeDefault = defaultValue->UInt;
+            uint beforeCurrentUInt = (currentValue != null && currentValue->Type == AtkValueType.UInt) ? currentValue->UInt : 0U;
+            string beforeCurrentStr = (currentValue != null && currentValue->Type is AtkValueType.String or AtkValueType.ManagedString or AtkValueType.String8)
                 ? ReadAtkValueString(*currentValue)
                 : string.Empty;
 
@@ -4175,11 +3946,11 @@ public sealed unsafe class Plugin : IDalamudPlugin
                 {
                     currentValue->UInt = desired;
                 }
-                else if (currentValue->Type is (AtkValueType.String or AtkValueType.ManagedString or AtkValueType.String8))
+                else if (currentValue->Type is AtkValueType.String or AtkValueType.ManagedString or AtkValueType.String8)
                 {
                     // This dialog uses a String "current quantity" slot on your client build.
                     // Overwrite the existing buffer in-place (max is <= 999 so this is safe).
-                    var s = desired.ToString();
+                    string s = desired.ToString();
                     WriteUtf8InPlace(currentValue->String, s);
                 }
             }
@@ -4190,9 +3961,9 @@ public sealed unsafe class Plugin : IDalamudPlugin
 
             if (Configuration.DebugMode)
             {
-                var curType = currentValue != null ? currentValue->Type.ToString() : "n/a";
-                var afterCurrentUInt = (currentValue != null && currentValue->Type == AtkValueType.UInt) ? currentValue->UInt : 0U;
-                var afterCurrentStr = (currentValue != null && currentValue->Type is (AtkValueType.String or AtkValueType.ManagedString or AtkValueType.String8))
+                string curType = currentValue != null ? currentValue->Type.ToString() : "n/a";
+                uint afterCurrentUInt = (currentValue != null && currentValue->Type == AtkValueType.UInt) ? currentValue->UInt : 0U;
+                string afterCurrentStr = (currentValue != null && currentValue->Type is AtkValueType.String or AtkValueType.ManagedString or AtkValueType.String8)
                     ? ReadAtkValueString(*currentValue)
                     : string.Empty;
                 Log.Information($"[QuickTransfer] InputNumeric(Update): prompt='{prompt}', min={min}, max={max}, default {beforeDefault}->{defaultValue->UInt}, currentUInt {beforeCurrentUInt}->{afterCurrentUInt}, currentStr '{beforeCurrentStr}'->'{afterCurrentStr}' (idx5 type {curType})");
@@ -4216,26 +3987,26 @@ public sealed unsafe class Plugin : IDalamudPlugin
             if (inputNumeric->UldManager.NodeList == null)
                 return;
 
-            var desiredStr = desired.ToString();
+            string desiredStr = desired.ToString();
 
-            for (var i = 0; i < inputNumeric->UldManager.NodeListCount; i++)
+            for(int i = 0; i < inputNumeric->UldManager.NodeListCount; i++)
             {
-                var node = inputNumeric->UldManager.NodeList[i];
+                AtkResNode* node = inputNumeric->UldManager.NodeList[i];
                 if (node == null)
                     continue;
 
                 if ((int)node->Type < 1000)
                     continue;
 
-                var compNode = (AtkComponentNode*)node;
-                var comp = compNode->Component;
+                AtkComponentNode* compNode = (AtkComponentNode*)node;
+                AtkComponentBase* comp = compNode->Component;
                 if (comp == null)
                     continue;
 
                 if (comp->GetComponentType() != ComponentType.NumericInput)
                     continue;
 
-                var ni = (AtkComponentNumericInput*)comp;
+                AtkComponentNumericInput* ni = (AtkComponentNumericInput*)comp;
 
                 // RawString / EvaluatedString are Utf8String.
                 WriteUtf8StringInPlace(&ni->RawString, desiredStr);
@@ -4260,7 +4031,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
         }
     }
 
-    private static void WriteUtf8StringInPlace(FFXIVClientStructs.FFXIV.Client.System.String.Utf8String* s, string value)
+    private static void WriteUtf8StringInPlace(Utf8String* s, string value)
     {
         if (s == null)
             return;
@@ -4275,9 +4046,9 @@ public sealed unsafe class Plugin : IDalamudPlugin
         if (dst == null)
             return;
 
-        var bytes = Encoding.UTF8.GetBytes(value);
+        byte[] bytes = Encoding.UTF8.GetBytes(value);
         // write bytes + null terminator
-        for (var i = 0; i < bytes.Length; i++)
+        for(int i = 0; i < bytes.Length; i++)
             dst[i] = bytes[i];
         dst[bytes.Length] = 0;
     }
@@ -4286,33 +4057,33 @@ public sealed unsafe class Plugin : IDalamudPlugin
     {
         try
         {
-            var ctxAddr = GameGui.GetAddonByName("ContextMenu", 1).Address;
+            nint ctxAddr = GameGui.GetAddonByName("ContextMenu").Address;
             if (ctxAddr == nint.Zero)
                 return false;
 
-            var ctxMenu = (AddonContextMenu*)ctxAddr;
+            AddonContextMenu* ctxMenu = (AddonContextMenu*)ctxAddr;
             if (ctxMenu == null)
                 return false;
 
             // Find the list component and pick the row whose label is "Remove".
             // FreeCompanyChest uses a Default context menu, so the AgentInventoryContext index-based selection does not apply.
-            for (uint listId = 1; listId <= 6; listId++)
+            for(uint listId = 1; listId <= 6; listId++)
             {
-                var list = ctxMenu->GetComponentListById(listId);
+                AtkComponentList* list = ctxMenu->GetComponentListById(listId);
                 if (list == null)
                     continue;
 
-                var itemCount = list->GetItemCount();
+                int itemCount = list->GetItemCount();
                 if (itemCount <= 0 || itemCount > 64)
                     continue;
 
-                for (var i = 0; i < itemCount; i++)
+                for(int i = 0; i < itemCount; i++)
                 {
-                    var labelPtr = list->GetItemLabel(i);
-                    if (labelPtr == null)
+                    CStringPointer labelPtr = list->GetItemLabel(i);
+                    if ((byte*)labelPtr == null)
                         continue;
 
-                    var label = Marshal.PtrToStringUTF8(new IntPtr(labelPtr))?.TrimEnd('\0') ?? string.Empty;
+                    string label = Marshal.PtrToStringUTF8(new(labelPtr))?.TrimEnd('\0') ?? string.Empty;
                     if (string.IsNullOrWhiteSpace(label))
                         continue;
 
@@ -4337,7 +4108,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
             // Fallback: keep old string-scan (helpful for debugging), but don't attempt a blind click.
             return ContextMenuContainsString((AtkUnitBase*)ctxMenu, "Remove");
         }
-        catch (Exception ex)
+        catch(Exception ex)
         {
             Log.Warning(ex, "[QuickTransfer] Failed to select Remove from Company Chest context menu.");
             return false;
@@ -4351,16 +4122,16 @@ public sealed unsafe class Plugin : IDalamudPlugin
             if (ctxAddon == null || ctxAddon->AtkValues == null || ctxAddon->AtkValuesCount <= 0)
                 return false;
 
-            var count = Math.Min((int)ctxAddon->AtkValuesCount, 128);
+            int count = Math.Min((int)ctxAddon->AtkValuesCount, 128);
             if (Configuration.DebugMode)
                 Log.Information($"[QuickTransfer] ContextMenu AtkValuesCount={ctxAddon->AtkValuesCount} (scanning {count}).");
-            for (var i = 0; i < count; i++)
+            for(int i = 0; i < count; i++)
             {
-                var v = ctxAddon->AtkValues[i];
+                AtkValue v = ctxAddon->AtkValues[i];
                 if (v.Type is not (AtkValueType.String or AtkValueType.ManagedString or AtkValueType.String8))
                     continue;
 
-                var s = ReadAtkValueString(v);
+                string s = ReadAtkValueString(v);
                 if (string.IsNullOrWhiteSpace(s))
                     continue;
 
@@ -4385,109 +4156,6 @@ public sealed unsafe class Plugin : IDalamudPlugin
 
     // (removed) GetMoveContainerId:
     // Company Chest transfers must use InventoryType values directly with RaptureAtkModule.HandleItemMove.
-    private static bool TryFindFirstCompanyChestEmptySlot(
-        out InventoryType destType,
-        out uint destSlot)
-    {
-        destType = default;
-        destSlot = 0;
-
-        // This method is static; use all known pages as a fallback, callers should prefer GetCompanyChestInventoryTypes().
-        var invTypes = Enum.GetValues<InventoryType>()
-            .Where(IsCompanyChestType)
-            .OrderBy(v => (int)v)
-            .ToArray();
-        if (invTypes.Length == 0)
-            return false;
-
-        var inv = InventoryManager.Instance();
-        if (inv == null)
-            return false;
-
-        // Most FC chest tabs are 50 slots; we keep a conservative cap.
-        const int slotCap = 80;
-
-        foreach (var t in invTypes)
-        {
-            for (var i = 0; i < slotCap; i++)
-            {
-                var item = inv->GetInventorySlot(t, i);
-                if (item == null)
-                    break;
-
-                if (item->ItemId == 0)
-                {
-                    destType = t;
-                    destSlot = (uint)i;
-                    return true;
-                }
-            }
-        }
-
-        return false;
-    }
-
-    private static bool TryFindCompanyChestExistingStackSlot(
-        uint itemId,
-        bool isHq,
-        uint maxStack,
-        out InventoryType destType,
-        out uint destSlot)
-    {
-        destType = default;
-        destSlot = 0;
-
-        var invTypes = Enum.GetValues<InventoryType>()
-            .Where(IsCompanyChestType)
-            .OrderBy(v => (int)v)
-            .ToArray();
-        if (invTypes.Length == 0)
-            return false;
-
-        var inv = InventoryManager.Instance();
-        if (inv == null)
-            return false;
-
-        const int slotCap = 80;
-        var bestFree = 0;
-        foreach (var t in invTypes)
-        {
-            for (var i = 0; i < slotCap; i++)
-            {
-                var it = inv->GetInventorySlot(t, i);
-                if (it == null)
-                    break;
-
-                if (it->ItemId != itemId)
-                continue;
-
-                var hq = it->Flags.HasFlag(InventoryItem.ItemFlags.HighQuality);
-                if (hq != isHq)
-                    continue;
-
-                if (maxStack <= 1)
-                    continue;
-
-                var qty = it->Quantity;
-                if (qty <= 0)
-                    continue;
-
-                var free = (int)maxStack - qty;
-                if (free <= 0)
-                    continue;
-
-                // Pick the stack with the most free space, to reduce "moves 1 then repeats" behavior.
-                if (free > bestFree)
-                {
-                    bestFree = free;
-                    destType = t;
-                    destSlot = (uint)i;
-                }
-            }
-        }
-
-        return bestFree > 0;
-    }
 
     // Use InventoryHelpers
     private static uint GetItemStackSize(uint itemId) => InventoryHelpers.GetItemStackSize(itemId);
@@ -4513,10 +4181,10 @@ public sealed unsafe class Plugin : IDalamudPlugin
     {
         try
         {
-            var agentAddonId = agent->AgentInterface.GetAddonId();
+            uint agentAddonId = agent->AgentInterface.GetAddonId();
             if (agentAddonId != 0)
             {
-                var addon = GetAddonById(agentAddonId);
+                AtkUnitBase* addon = GetAddonById(agentAddonId);
                 if (addon != null)
                 {
                     CloseContextMenuAddon(agent, addon);
@@ -4532,7 +4200,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
         // Fallback attempt.
         try
         {
-            var cm = GameGui.GetAddonByName("ContextMenu", 1);
+            AtkUnitBasePtr cm = GameGui.GetAddonByName("ContextMenu");
             if (!cm.IsNull)
                 CloseContextMenuAddon(agent, (AtkUnitBase*)cm.Address);
         }
@@ -4546,21 +4214,21 @@ public sealed unsafe class Plugin : IDalamudPlugin
     {
         try
         {
-            var max = Math.Min(Math.Min(agent->ContextItemCount, 64), maxItems);
-            for (var i = 0; i < max; i++)
+            int max = Math.Min(Math.Min(agent->ContextItemCount, 64), maxItems);
+            for(int i = 0; i < max; i++)
             {
-                var param = agent->EventParams[agent->ContexItemStartIndex + i];
+                AtkValue param = agent->EventParams[agent->ContexItemStartIndex + i];
                 if (param.Type is not (AtkValueType.String or AtkValueType.ManagedString))
                     continue;
 
-                var text = ReadAtkValueString(param);
+                string text = ReadAtkValueString(param);
                 if (string.IsNullOrWhiteSpace(text))
                     continue;
 
                 Log.Information($"[QuickTransfer] Menu idx={i}: '{text}'");
             }
         }
-        catch (Exception ex)
+        catch(Exception ex)
         {
             Log.Warning(ex, "[QuickTransfer] Failed to dump context menu.");
         }
@@ -4577,7 +4245,6 @@ public sealed unsafe class Plugin : IDalamudPlugin
     private static bool IsTradeOpen() => InventoryHelpers.IsTradeOpen();
     private static bool IsVendorOpen() => InventoryHelpers.IsVendorOpen();
     private static bool IsCompanyChestType(InventoryType inventoryType) => InventoryHelpers.IsCompanyChestType(inventoryType);
-    private static bool IsAddonVisibleAnyIndex(string addonName, int maxIndex = 6) => InventoryHelpers.IsAddonVisibleAnyIndex(addonName, maxIndex);
     private static bool TryGetVisibleAddon(string addonName, out AtkUnitBase* addon, int maxIndex = 6) => InventoryHelpers.TryGetVisibleAddon(addonName, out addon, maxIndex);
 
     private bool TryMapCompanyChestTabParamToPage(int eventParam, out InventoryType page)
@@ -4587,7 +4254,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
         {
             // IMPORTANT: this mapping is about tab clicks, not how many compartments we *want* to operate on.
             // So we always consider all possible item pages (up to 5), even if the user configured fewer.
-            var pages = GetAllCompanyChestItemPages();
+            InventoryType[] pages = GetAllCompanyChestItemPages();
             if (pages.Length == 0)
                 return false;
 
@@ -4624,10 +4291,95 @@ public sealed unsafe class Plugin : IDalamudPlugin
 
     // Use AtkValueHelpers
     private static string ReadAtkValueString(AtkValue v) => AtkValueHelpers.ReadAtkValueString(v);
-    private static string ReadUtf8(byte* ptr) => AtkValueHelpers.ReadUtf8(ptr);
     private static AtkUnitBase* GetAddonById(uint id) => AtkValueHelpers.GetAddonById(id);
     private static void GenerateCallback(AtkUnitBase* unitBase, params object[] values) => AtkValueHelpers.GenerateCallback(unitBase, values);
     private static void MakeAddonInvisible(AtkUnitBase* addon) => AtkValueHelpers.MakeAddonInvisible(addon);
     private static void MakeAddonVisible(AtkUnitBase* addon) => AtkValueHelpers.MakeAddonVisible(addon);
-}
 
+    [StructLayout(LayoutKind.Sequential)]
+    private struct Point
+    {
+        public int X;
+        public int Y;
+    }
+
+    private enum PendingNumericKind { None, Store, Remove, Move, Split, Trade, Sell }
+
+    private struct CompanyChestDepositState
+    {
+        public bool Active;
+        public InventoryType SourceType;
+        public uint SourceSlot;
+        public uint ItemId;
+        public bool IsHq;
+        public long NextAttemptAtMs;
+        public long ExpiresAtMs;
+        public int Steps;
+        public uint LastQty;
+        public long WaitForQtyChangeUntilMs;
+    }
+
+    private struct CompanyChestOrganizeState
+    {
+        public bool Active;
+        public uint OwnerAddonId;
+        public long NextAttemptAtMs;
+        public long ExpiresAtMs;
+        public int Steps;
+        public int Phase; // 0=stack, 1=compact
+        public InventoryType[] Pages;
+
+        // Throttle: wait for the last move to apply before issuing another.
+        public bool WaitingForApply;
+        public InventoryType WaitSrcType;
+        public uint WaitSrcSlot;
+        public uint WaitSrcItemId;
+        public int WaitSrcQty;
+        public InventoryType WaitDstType;
+        public uint WaitDstSlot;
+        public uint WaitDstItemId;
+        public int WaitDstQty;
+        public long WaitUntilMs;
+        public int WaitStuckCount;
+        public long WaitObservedChangeAtMs;
+    }
+
+    private enum ModifierMode
+    {
+        Shift,
+        Ctrl,
+        Alt
+    }
+
+    // AtkUnitBase.Close: Use IAddonLifecycle service instead of manual signature (recommended by Dalamud team).
+    // We use Hide() calls directly where needed, and IAddonLifecycle for addon lifecycle events.
+
+    // NOTE: For inventory transfers (including Free Company Chest), use the client callback handler:
+    // RaptureAtkModule::HandleItemMove(AtkValue* returnValue, AtkValue* values, uint valueCount)
+    // This is exposed directly by FFXIVClientStructs as a member function, so we do not signature-scan it ourselves.
+
+    // Use ContextMenuHandler.AutoContextAction
+    private enum AutoContextAction
+    {
+        RemoveFromCompanyChest = ContextMenuHandler.AutoContextAction.RemoveFromCompanyChest,
+        Split = ContextMenuHandler.AutoContextAction.Split,
+        Trade = ContextMenuHandler.AutoContextAction.Trade,
+        Sell = ContextMenuHandler.AutoContextAction.Sell
+    }
+
+    private readonly struct ChestSortKey(uint category, uint itemId, bool isHq) : IComparable<ChestSortKey>
+    {
+        private readonly uint category = category;
+        private readonly uint itemId = itemId;
+        private readonly byte hq = (byte)(isHq ? 1 : 0);
+
+        public int CompareTo(ChestSortKey other)
+        {
+            int c = category.CompareTo(other.category);
+            if (c != 0) return c;
+            c = itemId.CompareTo(other.itemId);
+            if (c != 0) return c;
+            return hq.CompareTo(other.hq); // NQ first, HQ after
+        }
+    }
+}

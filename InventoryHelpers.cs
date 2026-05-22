@@ -1,27 +1,22 @@
-using System;
-using System.Collections.Generic;
-using System.Linq;
+using Dalamud.Game.NativeWrapper;
+using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.Game;
 using FFXIVClientStructs.FFXIV.Component.GUI;
-using Dalamud.Plugin.Services;
-
+using Lumina.Excel;
+using Lumina.Excel.Sheets;
 namespace QuickTransfer;
 
 /// <summary>
-/// Static helper functions for inventory detection, type checking, and addon visibility.
+///     Static helper functions for inventory detection, type checking, and addon visibility.
 /// </summary>
 internal static unsafe class InventoryHelpers
 {
-    // Access services through Plugin's static properties
-    private static IGameGui GameGui => Plugin.GameGui;
-    private static IDataManager DataManager => Plugin.DataManager;
-
     private static readonly InventoryType[] PlayerInventoryTypes =
     [
         InventoryType.Inventory1,
         InventoryType.Inventory2,
         InventoryType.Inventory3,
-        InventoryType.Inventory4,
+        InventoryType.Inventory4
     ];
 
     private static readonly InventoryType[] SaddlebagInventoryTypes =
@@ -29,7 +24,7 @@ internal static unsafe class InventoryHelpers
         InventoryType.SaddleBag1,
         InventoryType.SaddleBag2,
         InventoryType.PremiumSaddleBag1,
-        InventoryType.PremiumSaddleBag2,
+        InventoryType.PremiumSaddleBag2
     ];
 
     private static readonly InventoryType[] RetainerInventoryTypes =
@@ -40,8 +35,14 @@ internal static unsafe class InventoryHelpers
         InventoryType.RetainerPage4,
         InventoryType.RetainerPage5,
         InventoryType.RetainerPage6,
-        InventoryType.RetainerPage7,
+        InventoryType.RetainerPage7
     ];
+
+    private static readonly Dictionary<uint, uint> StackSizeCache = new();
+    private static readonly Dictionary<uint, uint> ItemUiCategoryCache = new();
+    // Access services through Plugin's static properties
+    private static IGameGui GameGui => Plugin.GameGui;
+    private static IDataManager DataManager => Plugin.DataManager;
 
     public static bool IsPlayerInventoryType(InventoryType inventoryType)
         => inventoryType is
@@ -85,7 +86,7 @@ internal static unsafe class InventoryHelpers
 
     public static bool IsCompanyChestType(InventoryType inventoryType)
     {
-        var name = Enum.GetName(typeof(InventoryType), inventoryType);
+        string? name = Enum.GetName(typeof(InventoryType), inventoryType);
         if (string.IsNullOrEmpty(name))
             return false;
 
@@ -96,13 +97,13 @@ internal static unsafe class InventoryHelpers
 
     public static bool IsAddonVisible(string addonName, int index = 1)
     {
-        var addon = GameGui.GetAddonByName(addonName, index);
-        return !addon.IsNull && addon.IsVisible;
+        AtkUnitBasePtr addon = GameGui.GetAddonByName(addonName, index);
+        return addon is { IsNull: false, IsVisible: true };
     }
 
     public static bool IsAddonVisibleAnyIndex(string addonName, int maxIndex = 6)
     {
-        for (var i = 1; i <= maxIndex; i++)
+        for(int i = 1; i <= maxIndex; i++)
         {
             if (IsAddonVisible(addonName, i))
                 return true;
@@ -113,7 +114,7 @@ internal static unsafe class InventoryHelpers
 
     public static bool IsAnyAddonVisible(IEnumerable<string> addonNames, int index = 1)
     {
-        foreach (var name in addonNames)
+        foreach(string name in addonNames)
         {
             if (IsAddonVisible(name, index))
                 return true;
@@ -124,7 +125,7 @@ internal static unsafe class InventoryHelpers
 
     public static bool IsAnyAddonVisibleAnyIndex(IEnumerable<string> addonNames, int maxIndex = 6)
     {
-        foreach (var name in addonNames)
+        foreach(string name in addonNames)
         {
             if (IsAddonVisibleAnyIndex(name, maxIndex))
                 return true;
@@ -135,22 +136,20 @@ internal static unsafe class InventoryHelpers
 
     public static bool IsInventoryAndSaddlebagOpen()
     {
-        var inventoryOpen = IsAddonVisibleAnyIndex("Inventory");
-        var saddlebagOpen = IsAddonVisibleAnyIndex("InventoryBuddy") || IsAddonVisibleAnyIndex("InventoryBuddy2");
+        bool inventoryOpen = IsAddonVisibleAnyIndex("Inventory");
+        bool saddlebagOpen = IsAddonVisibleAnyIndex("InventoryBuddy") || IsAddonVisibleAnyIndex("InventoryBuddy2");
         return inventoryOpen && saddlebagOpen;
     }
 
     public static bool IsSaddlebagOpen()
         => IsAddonVisibleAnyIndex("InventoryBuddy") || IsAddonVisibleAnyIndex("InventoryBuddy2");
 
-    public static bool IsRetainerOpen()
-    {
+    public static bool IsRetainerOpen() =>
         // Common retainer inventory addons.
         // (SimpleTweaks checks "RetainerGrid0" for retainer inventory visibility.)
-        return IsAddonVisibleAnyIndex("RetainerGrid0") ||
-               IsAddonVisibleAnyIndex("RetainerSellList") ||
-               IsAddonVisibleAnyIndex("RetainerGrid");
-    }
+        IsAddonVisibleAnyIndex("RetainerGrid0") ||
+        IsAddonVisibleAnyIndex("RetainerSellList") ||
+        IsAddonVisibleAnyIndex("RetainerGrid");
 
     public static bool IsCompanyChestOpen()
         => IsAddonVisibleAnyIndex("FreeCompanyChest");
@@ -164,10 +163,10 @@ internal static unsafe class InventoryHelpers
     public static bool TryGetVisibleAddon(string addonName, out AtkUnitBase* addon, int maxIndex = 6)
     {
         addon = null;
-        for (var i = 1; i <= maxIndex; i++)
+        for(int i = 1; i <= maxIndex; i++)
         {
-            var a = GameGui.GetAddonByName(addonName, i);
-            if (!a.IsNull && a.IsVisible)
+            AtkUnitBasePtr a = GameGui.GetAddonByName(addonName, i);
+            if (a is { IsNull: false, IsVisible: true })
             {
                 addon = (AtkUnitBase*)a.Address;
                 return true;
@@ -188,11 +187,11 @@ internal static unsafe class InventoryHelpers
         isHq = false;
         quantity = 0;
 
-        var inv = InventoryManager.Instance();
+        InventoryManager* inv = InventoryManager.Instance();
         if (inv == null)
             return false;
 
-        var it = inv->GetInventorySlot(type, slot);
+        InventoryItem* it = inv->GetInventorySlot(type, slot);
         if (it == null)
             return false;
 
@@ -208,7 +207,7 @@ internal static unsafe class InventoryHelpers
         {
             if (inv == null)
                 return false;
-            var c = inv->GetInventoryContainer(type);
+            InventoryContainer* c = inv->GetInventoryContainer(type);
             return c != null && c->IsLoaded && c->Size > 0;
         }
         catch
@@ -221,9 +220,6 @@ internal static unsafe class InventoryHelpers
     public static InventoryType[] GetSaddlebagInventoryTypes() => SaddlebagInventoryTypes;
     public static InventoryType[] GetRetainerInventoryTypes() => RetainerInventoryTypes;
 
-    private static readonly Dictionary<uint, uint> StackSizeCache = new();
-    private static readonly Dictionary<uint, uint> ItemUiCategoryCache = new();
-
     public static uint GetItemStackSize(uint itemId)
     {
         try
@@ -232,26 +228,26 @@ internal static unsafe class InventoryHelpers
             if (itemId == 0)
                 return 1;
 
-            lock (StackSizeCache)
+            lock(StackSizeCache)
             {
-                if (StackSizeCache.TryGetValue(itemId, out var cached))
+                if (StackSizeCache.TryGetValue(itemId, out uint cached))
                     return cached;
             }
 
-            var sheet = DataManager.GetExcelSheet<Lumina.Excel.Sheets.Item>();
-            if (sheet == null)
-                return 999;
+            ExcelSheet<Item> sheet = DataManager.GetExcelSheet<Item>();
 
             // Item row IDs are base IDs; InventoryItem.ItemId is expected to already be base.
-            var row = sheet.GetRow(itemId);
+            Item row = sheet.GetRow(itemId);
             if (row.RowId == 0)
                 return 999;
 
             // In modern Lumina sheets, Item.StackSize exists.
-            var s = row.StackSize;
-            var result = s <= 0 ? 1U : (uint)s;
-            lock (StackSizeCache)
+            uint s = row.StackSize;
+            uint result = s <= 0 ? 1U : s;
+            lock(StackSizeCache)
+            {
                 StackSizeCache[itemId] = result;
+            }
             return result;
         }
         catch
@@ -268,17 +264,15 @@ internal static unsafe class InventoryHelpers
             if (itemId == 0)
                 return 0;
 
-            lock (ItemUiCategoryCache)
+            lock(ItemUiCategoryCache)
             {
-                if (ItemUiCategoryCache.TryGetValue(itemId, out var cached))
+                if (ItemUiCategoryCache.TryGetValue(itemId, out uint cached))
                     return cached;
             }
 
-            var sheet = DataManager.GetExcelSheet<Lumina.Excel.Sheets.Item>();
-            if (sheet == null)
-                return 0;
+            ExcelSheet<Item> sheet = DataManager.GetExcelSheet<Item>();
 
-            var row = sheet.GetRow(itemId);
+            Item row = sheet.GetRow(itemId);
             if (row.RowId == 0)
                 return 0;
 
@@ -294,8 +288,10 @@ internal static unsafe class InventoryHelpers
                 result = 0;
             }
 
-            lock (ItemUiCategoryCache)
+            lock(ItemUiCategoryCache)
+            {
                 ItemUiCategoryCache[itemId] = result;
+            }
             return result;
         }
         catch

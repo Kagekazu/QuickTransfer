@@ -2,7 +2,7 @@
   "Author": "flick",
   "Name": "QuickTransfer",
   "InternalName": "QuickTransfer",
-  "AssemblyVersion": "1.0.5.0",
+  "AssemblyVersion": "1.0.6.0",
   "Description": "Automate inventory transfers with Shift/Ctrl/Alt + Right-Click. Trade window, vendor quick sell, FC chest.",
   "ApplicableVersion": "any",
   "RepoUrl": "https://github.com/Knack117/QuickTransfer",
@@ -11,7 +11,7 @@
     "utility",
     "quality of life"
   ],
-  "DalamudApiLevel": 14,
+  "DalamudApiLevel": 15,
   "LoadRequiredState": 0,
   "LoadSync": false,
   "CanUnloadAsync": false,
