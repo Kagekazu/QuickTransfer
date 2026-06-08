@@ -43,10 +43,12 @@ A Dalamud plugin for Final Fantasy XIV that adds quick inventory actions via the
 
 #### Method 2: Development build (local)
 1. Clone or download this repository
-2. Open `QuickTransfer.slnx` in Visual Studio 2022 (17.13+) or JetBrains Rider
-3. Build the solution (Release configuration), or run `dotnet build QuickTransfer.slnx -c Release`
+2. Open **`QuickTransfer.slnx`** in JetBrains Rider or Visual Studio 2022 (17.13+)
+   - In Rider: use **File → Open** and select `QuickTransfer.slnx` (not the folder alone)
+   - The toolbar should offer **Debug | x64** and **Release | x64** build configurations, like other Dalamud plugins
+3. Build (Release configuration), or run `dotnet build QuickTransfer.slnx -c Release`
 4. In-game, open Dalamud Settings → Experimental → Dev Plugin Locations
-5. Add the path to the compiled DLL (typically `bin/Release/QuickTransfer.dll` or `bin/Debug/QuickTransfer.dll`)
+5. Add the path to the compiled DLL (`bin\x64\Debug\QuickTransfer.dll` or `bin\x64\Release\QuickTransfer.dll`)
 6. Type `/xlplugins` in-game and enable QuickTransfer
 
 ## Usage
@@ -119,9 +121,9 @@ If an option is not present for the clicked item, **nothing happens**.
 
 ### Setting Up Development Environment
 
-1. Install Visual Studio 2022 with the .NET 10 SDK
+1. Install Visual Studio 2022 (17.13+) or JetBrains Rider with the .NET 10 SDK
 2. Clone this repository
-3. Open `QuickTransfer.csproj`
+3. Open **`QuickTransfer.slnx`** (not the folder alone)
 4. Build the project
 
 ### Building
@@ -165,7 +167,7 @@ QuickTransfer/
 │   └── QuickTransferState.cs         # FC chest state structs and enums
 ├── UI/
 │   └── QuickTransferWindow.cs        # Configuration window
-├── QuickTransfer.slnx                # Solution file (XML format)
+├── QuickTransfer.slnx                # Solution file (open this in Rider/VS)
 ├── QuickTransfer.csproj
 ├── pluginmaster.json                 # Manifest reference (live repo is on puni.sh)
 └── README.md
