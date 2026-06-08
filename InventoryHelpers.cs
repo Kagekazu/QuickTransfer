@@ -51,6 +51,9 @@ internal static unsafe class InventoryHelpers
             InventoryType.Inventory3 or
             InventoryType.Inventory4;
 
+    public static bool IsCompanyChestDepositSourceType(InventoryType inventoryType)
+        => IsPlayerInventoryType(inventoryType) || IsArmouryType(inventoryType);
+
     public static bool IsArmouryType(InventoryType inventoryType)
         => inventoryType is
             InventoryType.ArmoryMainHand or

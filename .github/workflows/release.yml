@@ -20,11 +20,11 @@ jobs:
         with:
           dotnet-version: "10.0.x"
 
-      - name: Fetch Dalamud SDK libs (api14)
+      - name: Fetch Dalamud SDK libs (api15)
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $url = "https://raw.githubusercontent.com/goatcorp/dalamud-distrib/main/api14/latest.zip"
+          $url = "https://raw.githubusercontent.com/goatcorp/dalamud-distrib/main/api15/latest.zip"
           $tmp = Join-Path $env:RUNNER_TEMP "dalamud"
           $zip = Join-Path $tmp "dalamud.zip"
           $dst = Join-Path $tmp "extracted"

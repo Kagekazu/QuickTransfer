@@ -2,6 +2,8 @@
 
 A Dalamud plugin for Final Fantasy XIV that adds quick inventory actions via the game's existing context menus:
 
+- **Install**: [puni.sh repository](https://puni.sh/api/repository/kage) · **Source**: [GitHub](https://github.com/Kagekazu/QuickTransfer)
+
 - **Shift + Right Click**: quick transfers (including vendor sell when shop is open)
 - **Ctrl + Right Click**: armoury-mode transfers (when a special container is open)
 - **Alt + Right Click**: split a stack in half
@@ -11,6 +13,7 @@ A Dalamud plugin for Final Fantasy XIV that adds quick inventory actions via the
 - **Quick Transfer**: Hold Shift and right-click an item to automatically trigger the matching context menu action
 - **Vendor Quick Sell**: With a vendor shop open, Shift + Right Click auto-selects **Sell**. With **Auto-confirm vendor sell** enabled, quantity dialogs and "Are you certain?" confirmations are auto-filled and confirmed
 - **Trade Window Support**: Shift + Right Click items from inventory into Trade window with auto-fill max quantity
+- **Retainer Support**: Shift + Right Click between Inventory/Armoury and Retainer, or between Retainer and Saddlebags
 - **Company Chest**: Shift + Right Click to deposit/withdraw when Free Company Chest is open; middle-click runs organize (stack + compact)
 - **Armoury Mode**: Hold Ctrl and right-click to prioritize armoury actions while a special container is open
 - **Split Half**: Hold Alt and right-click to split a stack and auto-fill half
@@ -32,9 +35,11 @@ A Dalamud plugin for Final Fantasy XIV that adds quick inventory actions via the
 #### Method 1: Custom Dalamud repository (recommended)
 1. In-game, open **Dalamud Settings** → **Experimental**
 2. Under **Custom Plugin Repositories**, add this URL:
-   - `https://raw.githubusercontent.com/Knack117/QuickTransfer/main/pluginmaster.json`
+   - `https://puni.sh/api/repository/kage`
 3. Click **Save**
 4. Type `/xlplugins` in-game, search for **QuickTransfer**, and click **Install**
+
+> **Note:** The plugin is hosted on [puni.sh](https://puni.sh/api/repository/kage). The [GitHub repository](https://github.com/Kagekazu/QuickTransfer) is for source code, issues, and development builds only.
 
 #### Method 2: Development build (local)
 1. Clone or download this repository
@@ -59,6 +64,15 @@ The plugin only clicks **existing** context menu options when they are available
 - **Inventory + Armoury Chest**
   - (Gear) Inventory → **Place in Armoury Chest**
   - Armoury → **Return to Inventory**
+- **Inventory + Retainer**
+  - Inventory → **Entrust to Retainer**
+  - Retainer → **Retrieve from Retainer**
+- **Armoury + Retainer**
+  - Armoury → **Entrust to Retainer**
+  - Retainer → **Retrieve from Retainer**
+- **Retainer + Chocobo Saddlebags**
+  - Retainer → **Add All to Saddlebag**
+  - Saddlebags → **Entrust to Retainer**
 - **Trade Window**
   - Inventory → **Trade** (auto-fills and confirms max quantity for stackable items)
 - **Vendor Shop**
@@ -67,6 +81,8 @@ The plugin only clicks **existing** context menu options when they are available
   - Shift + Right Click Inventory/Armoury → deposit; Shift + Right Click Company Chest → **Remove** (withdraw)
 
 If an option is not present for the clicked item, **nothing happens**.
+
+**Modifier priority** (when multiple keys are held): Alt → Ctrl → Shift.
 
 ### Armoury Mode (Ctrl + Right Click)
 
@@ -97,6 +113,7 @@ If an option is not present for the clicked item, **nothing happens**.
 | Auto-confirm quantity prompts | Auto-fill and confirm InputNumeric prompts (Split / FC chest) | True |
 | Enable Vendor Quick Sell | Shift+RClick auto-selects "Sell" when vendor is open | True |
 | Auto-confirm vendor sell | Auto-fill quantity and click OK on sell dialogs ("How many?", "Are you certain?") | True |
+| Company Chest compartments | Number of FC item tabs to use for deposit/organize (3–5) | 3 |
 
 ## Development
 
@@ -136,7 +153,7 @@ QuickTransfer/
 ├── InventoryHelpers.cs       # Inventory/addon detection
 ├── DragDropHelpers.cs        # Drag-drop parsing
 ├── AtkValueHelpers.cs        # AtkValue and addon utilities
-├── pluginmaster.json         # Custom repository metadata (for Dalamud)
+├── pluginmaster.json         # Plugin manifest (reference; live repo is on puni.sh)
 └── README.md                 # This file
 ```
 
@@ -181,13 +198,13 @@ Enable Debug Mode to see transfer attempts in chat:
 
 ## Contributing
 
-Contributions are welcome! Please read the contributing guidelines before submitting pull requests.
+Contributions are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 ### Reporting Issues
 
 1. Check existing issues to avoid duplicates
-2. Include steps to reproduce
-3. Include plugin version and game version
+2. Open an issue on [GitHub](https://github.com/Kagekazu/QuickTransfer/issues)
+3. Include steps to reproduce, plugin version, and game version
 4. Include any relevant logs
 
 ## License
@@ -201,6 +218,15 @@ This plugin is licensed under the MIT License - see the `LICENSE` file for detai
 - **Contributors**: Thanks to everyone who has contributed to this project
 
 ## Changelog
+
+### Version 1.0.7
+- **Fix**: Armoury → Free Company Chest deposit now works with Shift + Right Click (previously inventory-only)
+- **Fix**: Release CI updated from Dalamud API 14 to API 15 to match the project SDK
+- **New**: Company Chest compartments setting exposed in the config UI (3–5 tabs)
+- README updated: retainer flows, modifier priority, and configuration table
+
+### Version 1.0.6
+- Maintenance release (version alignment across manifests)
 
 ### Version 1.0.5
 - **New**: Vendor Quick Sell — Shift + Right Click at a vendor shop auto-selects **Sell**
