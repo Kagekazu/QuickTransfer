@@ -1,7 +1,7 @@
 <Project Sdk="Dalamud.NET.Sdk/15.0.0">
     <PropertyGroup>
         <Authors>flick, Kagekazu</Authors>
-        <Version>1.1.0.0</Version>
+        <Version>1.1.0.1</Version>
         <ImplicitUsings>enable</ImplicitUsings>
     </PropertyGroup>
 
