@@ -6,7 +6,7 @@ Thank you for your interest in contributing!
 
 1. Fork the repository and clone your fork.
 2. Install the .NET 10 SDK and a local Dalamud dev environment (XIVLauncher with dev plugin loading enabled).
-3. Build with `dotnet build -c Release` and test in-game via Dev Plugin Locations.
+3. Build with `dotnet build QuickTransfer.slnx -c Release` and test in-game via Dev Plugin Locations.
 
 ## Pull requests
 

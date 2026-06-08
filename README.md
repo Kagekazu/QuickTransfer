@@ -43,8 +43,8 @@ A Dalamud plugin for Final Fantasy XIV that adds quick inventory actions via the
 
 #### Method 2: Development build (local)
 1. Clone or download this repository
-2. Open the solution in Visual Studio 2022
-3. Build the solution (Release configuration)
+2. Open `QuickTransfer.slnx` in Visual Studio 2022 (17.13+) or JetBrains Rider
+3. Build the solution (Release configuration), or run `dotnet build QuickTransfer.slnx -c Release`
 4. In-game, open Dalamud Settings → Experimental → Dev Plugin Locations
 5. Add the path to the compiled DLL (typically `bin/Release/QuickTransfer.dll` or `bin/Debug/QuickTransfer.dll`)
 6. Type `/xlplugins` in-game and enable QuickTransfer
@@ -128,10 +128,10 @@ If an option is not present for the clicked item, **nothing happens**.
 
 ```bash
 # Build Debug
-dotnet build --configuration Debug
+dotnet build QuickTransfer.slnx --configuration Debug
 
 # Build Release
-dotnet build --configuration Release
+dotnet build QuickTransfer.slnx --configuration Release
 ```
 
 Release build produces `bin/Release/QuickTransfer/latest.zip` for distribution.
@@ -165,6 +165,7 @@ QuickTransfer/
 │   └── QuickTransferState.cs         # FC chest state structs and enums
 ├── UI/
 │   └── QuickTransferWindow.cs        # Configuration window
+├── QuickTransfer.slnx                # Solution file (XML format)
 ├── QuickTransfer.csproj
 ├── pluginmaster.json                 # Manifest reference (live repo is on puni.sh)
 └── README.md
@@ -236,6 +237,7 @@ This plugin is licensed under the MIT License - see the `LICENSE` file for detai
 - **Refactor**: Phase 3 — split monolithic plugin into `Handlers/` (MMB sort, FC chest, InputNumeric) via partial class
 - **Refactor**: Folder layout — `Core/`, `Helpers/`, `Plugin/`, `UI/`
 - **Refactor**: `CursorHoverHelpers`, `DragDropHelpers.TryResolveTargetFromWeirdPayload`, context menu debug helpers extracted
+- **Dev**: Solution file migrated to XML-based `QuickTransfer.slnx`
 
 ### Version 1.0.9
 - **Refactor**: Phase 2 cleanup — `OpenForItemSlot` hook migrated to ECommons `EzHook` (auto-dispose on unload)
