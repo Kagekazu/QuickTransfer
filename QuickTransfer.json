@@ -1,8 +1,8 @@
 {
-  "Author": "flick",
+  "Author": "flick, Kagekazu",
   "Name": "QuickTransfer",
   "InternalName": "QuickTransfer",
-  "AssemblyVersion": "1.0.7.0",
+  "AssemblyVersion": "1.0.9.0",
   "Description": "Automate inventory transfers with Shift/Ctrl/Alt + Right-Click. Trade window, vendor quick sell, FC chest.",
   "ApplicableVersion": "any",
   "RepoUrl": "https://github.com/Kagekazu/QuickTransfer",

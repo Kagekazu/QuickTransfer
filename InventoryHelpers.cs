@@ -1,9 +1,8 @@
-using Dalamud.Game.NativeWrapper;
-using Dalamud.Plugin.Services;
+using ECommons;
 using FFXIVClientStructs.FFXIV.Client.Game;
 using FFXIVClientStructs.FFXIV.Component.GUI;
-using Lumina.Excel;
 using Lumina.Excel.Sheets;
+
 namespace QuickTransfer;
 
 /// <summary>
@@ -40,9 +39,6 @@ internal static unsafe class InventoryHelpers
 
     private static readonly Dictionary<uint, uint> StackSizeCache = new();
     private static readonly Dictionary<uint, uint> ItemUiCategoryCache = new();
-    // Access services through Plugin's static properties
-    private static IGameGui GameGui => Plugin.GameGui;
-    private static IDataManager DataManager => Plugin.DataManager;
 
     public static bool IsPlayerInventoryType(InventoryType inventoryType)
         => inventoryType is
@@ -93,15 +89,13 @@ internal static unsafe class InventoryHelpers
         if (string.IsNullOrEmpty(name))
             return false;
 
-        // We only want the *item compartments*, not crystals/gil/etc.
-        // Observed names: FreeCompanyPage1..FreeCompanyPage5
         return name.StartsWith("FreeCompanyPage", StringComparison.OrdinalIgnoreCase);
     }
 
     public static bool IsAddonVisible(string addonName, int index = 1)
     {
-        AtkUnitBasePtr addon = GameGui.GetAddonByName(addonName, index);
-        return addon is { IsNull: false, IsVisible: true };
+        AtkUnitBase* addon = AddonHelpers.GetAddonByName(addonName, index);
+        return addon != null && addon->IsVisible;
     }
 
     public static bool IsAddonVisibleAnyIndex(string addonName, int maxIndex = 6)
@@ -147,12 +141,10 @@ internal static unsafe class InventoryHelpers
     public static bool IsSaddlebagOpen()
         => IsAddonVisibleAnyIndex("InventoryBuddy") || IsAddonVisibleAnyIndex("InventoryBuddy2");
 
-    public static bool IsRetainerOpen() =>
-        // Common retainer inventory addons.
-        // (SimpleTweaks checks "RetainerGrid0" for retainer inventory visibility.)
-        IsAddonVisibleAnyIndex("RetainerGrid0") ||
-        IsAddonVisibleAnyIndex("RetainerSellList") ||
-        IsAddonVisibleAnyIndex("RetainerGrid");
+    public static bool IsRetainerOpen()
+        => IsAddonVisibleAnyIndex("RetainerGrid0") ||
+           IsAddonVisibleAnyIndex("RetainerSellList") ||
+           IsAddonVisibleAnyIndex("RetainerGrid");
 
     public static bool IsCompanyChestOpen()
         => IsAddonVisibleAnyIndex("FreeCompanyChest");
@@ -164,20 +156,7 @@ internal static unsafe class InventoryHelpers
         => IsAddonVisibleAnyIndex("Shop");
 
     public static bool TryGetVisibleAddon(string addonName, out AtkUnitBase* addon, int maxIndex = 6)
-    {
-        addon = null;
-        for(int i = 1; i <= maxIndex; i++)
-        {
-            AtkUnitBasePtr a = GameGui.GetAddonByName(addonName, i);
-            if (a is { IsNull: false, IsVisible: true })
-            {
-                addon = (AtkUnitBase*)a.Address;
-                return true;
-            }
-        }
-
-        return false;
-    }
+        => AddonHelpers.TryGetVisibleAddon(addonName, out addon, maxIndex);
 
     public static bool TryGetItemInfo(
         InventoryType type,
@@ -227,7 +206,6 @@ internal static unsafe class InventoryHelpers
     {
         try
         {
-            // If item isn't known/stackable, return 1.
             if (itemId == 0)
                 return 1;
 
@@ -237,14 +215,9 @@ internal static unsafe class InventoryHelpers
                     return cached;
             }
 
-            ExcelSheet<Item> sheet = DataManager.GetExcelSheet<Item>();
-
-            // Item row IDs are base IDs; InventoryItem.ItemId is expected to already be base.
-            Item row = sheet.GetRow(itemId);
-            if (row.RowId == 0)
+            if (!GenericHelpers.TryGetRow<Item>(itemId, out Item row) || row.RowId == 0)
                 return 999;
 
-            // In modern Lumina sheets, Item.StackSize exists.
             uint s = row.StackSize;
             uint result = s <= 0 ? 1U : s;
             lock(StackSizeCache)
@@ -255,7 +228,6 @@ internal static unsafe class InventoryHelpers
         }
         catch
         {
-            // Fallback: most stackables are 999, and non-stackables will hit maxStack <= 1 cases anyway.
             return 999;
         }
     }
@@ -273,17 +245,12 @@ internal static unsafe class InventoryHelpers
                     return cached;
             }
 
-            ExcelSheet<Item> sheet = DataManager.GetExcelSheet<Item>();
-
-            Item row = sheet.GetRow(itemId);
-            if (row.RowId == 0)
+            if (!GenericHelpers.TryGetRow<Item>(itemId, out Item row) || row.RowId == 0)
                 return 0;
 
-            // Prefer UI category; this tends to match how game sorts items visually.
             uint result;
             try
             {
-                // Lumina RowRef usually exposes RowId.
                 result = row.ItemUICategory.RowId;
             }
             catch

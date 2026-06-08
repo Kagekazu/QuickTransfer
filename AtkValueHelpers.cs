@@ -11,7 +11,8 @@ namespace QuickTransfer;
 /// </summary>
 internal static unsafe class AtkValueHelpers
 {
-    private const int UnitListCount = 18;
+    public static bool IsStringValueType(AtkValueType type)
+        => type is AtkValueType.String or AtkValueType.ManagedString or AtkValueType.ConstString;
 
     public static string ReadAtkValueString(AtkValue v)
     {
@@ -20,7 +21,6 @@ internal static unsafe class AtkValueHelpers
 
         try
         {
-            // SimpleTweaks-style decoding.
             return Marshal.PtrToStringUTF8(new(v.String))?.TrimEnd('\0') ?? string.Empty;
         }
         catch
@@ -47,7 +47,7 @@ internal static unsafe class AtkValueHelpers
             return;
 
         byte[] bytes = Encoding.UTF8.GetBytes(value);
-        int max = Math.Min(bytes.Length, 255); // reasonable limit
+        int max = Math.Min(bytes.Length, 255);
         for(int i = 0; i < max; i++)
             dst[i] = bytes[i];
         dst[max] = 0;
@@ -59,24 +59,11 @@ internal static unsafe class AtkValueHelpers
             return;
 
         WriteUtf8InPlace(s->StringPtr, value);
+        s->StringLength = value.Length;
+        s->BufUsed = value.Length + 1;
     }
 
-    public static AtkUnitBase* GetAddonById(uint id)
-    {
-        AtkUnitList* unitManagers = &AtkStage.Instance()->RaptureAtkUnitManager->AtkUnitManager.DepthLayerOneList;
-        for(int i = 0; i < UnitListCount; i++)
-        {
-            AtkUnitList* unitManager = &unitManagers[i];
-            for(int j = 0; j < Math.Min(unitManager->Count, unitManager->Entries.Length); j++)
-            {
-                AtkUnitBase* unitBase = unitManager->Entries[j].Value;
-                if (unitBase != null && unitBase->Id == id)
-                    return unitBase;
-            }
-        }
-
-        return null;
-    }
+    public static AtkUnitBase* GetAddonById(uint id) => AddonHelpers.GetAddonById(id);
 
     public static AtkValue* CreateAtkValueArray(params object[] values)
     {
@@ -187,7 +174,6 @@ internal static unsafe class AtkValueHelpers
         if (root == null)
             return;
 
-        // Keep it logically visible/interactive, but force it fully transparent before it draws.
         root->Color.A = 0;
         root->Alpha_2 = 0;
     }
@@ -200,7 +186,6 @@ internal static unsafe class AtkValueHelpers
         if (root == null)
             return;
 
-        // Restore fully visible alpha; this prevents "stuck invisible" menus after a suppression frame.
         root->Color.A = 255;
         root->Alpha_2 = 255;
     }
