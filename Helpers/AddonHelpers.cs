@@ -1,5 +1,4 @@
 using FFXIVClientStructs.FFXIV.Component.GUI;
-
 namespace QuickTransfer;
 
 /// <summary>
@@ -13,7 +12,7 @@ internal static unsafe class AddonHelpers
         {
             try
             {
-                AtkStage* stage = AtkStage.Instance();
+                var stage = AtkStage.Instance();
                 return stage == null ? null : &stage->RaptureAtkUnitManager->AtkUnitManager;
             }
             catch
@@ -27,14 +26,14 @@ internal static unsafe class AddonHelpers
     {
         try
         {
-            if (id == 0 || id > ushort.MaxValue)
+            if (id is 0 or > ushort.MaxValue)
                 return null;
 
-            AtkUnitManager* mgr = UnitManager;
+            var mgr = UnitManager;
             if (mgr == null)
                 return null;
 
-            AtkUnitBase* addon = mgr->GetAddonById((ushort)id);
+            var addon = mgr->GetAddonById((ushort)id);
             return addon != null && addon->Id == id ? addon : null;
         }
         catch
@@ -50,7 +49,7 @@ internal static unsafe class AddonHelpers
             if (string.IsNullOrEmpty(addonName) || index < 1)
                 return null;
 
-            AtkUnitManager* mgr = UnitManager;
+            var mgr = UnitManager;
             return mgr == null ? null : mgr->GetAddonByName(addonName, index);
         }
         catch
@@ -65,10 +64,10 @@ internal static unsafe class AddonHelpers
         if (string.IsNullOrEmpty(addonName))
             return false;
 
-        int limit = Math.Max(1, maxIndex);
-        for(int i = 1; i <= limit; i++)
+        var limit = Math.Max(1, maxIndex);
+        for (var i = 1; i <= limit; i++)
         {
-            AtkUnitBase* candidate = GetAddonByName(addonName, i);
+            var candidate = GetAddonByName(addonName, i);
             if (candidate == null || !candidate->IsVisible)
                 continue;
 

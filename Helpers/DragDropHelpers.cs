@@ -51,7 +51,7 @@ internal static unsafe class DragDropHelpers
         {
             try
             {
-                AtkComponentListItemRenderer* r = eventData->ListItemData.ListItemRenderer;
+                var r = eventData->ListItemData.ListItemRenderer;
                 if (r != null)
                 {
                     // Prefer the embedded DragDrop component if present.
@@ -85,11 +85,11 @@ internal static unsafe class DragDropHelpers
             // Prefer HoveredItemIndex, then fall back to other hover slots.
             static AtkDragDropInterface* FromIndex(AtkComponentList* l, int idx)
             {
-                if (idx < 0 || idx > 512)
+                if (idx is < 0 or > 512)
                     return null;
                 try
                 {
-                    AtkComponentListItemRenderer* r = l->GetItemRenderer(idx);
+                    var r = l->GetItemRenderer(idx);
                     return r != null ? &r->AtkDragDropInterface : null;
                 }
                 catch
@@ -98,19 +98,16 @@ internal static unsafe class DragDropHelpers
                 }
             }
 
-            AtkDragDropInterface* ddi0 = FromIndex(list, list->HoveredItemIndex);
+            var ddi0 = FromIndex(list, list->HoveredItemIndex);
             if (ddi0 != null)
                 return ddi0;
 
-            AtkDragDropInterface* ddi1 = FromIndex(list, list->HoveredItemIndex2);
+            var ddi1 = FromIndex(list, list->HoveredItemIndex2);
             if (ddi1 != null)
                 return ddi1;
 
-            AtkDragDropInterface* ddi2 = FromIndex(list, list->HoveredItemIndex3);
-            if (ddi2 != null)
-                return ddi2;
-
-            return null;
+            var ddi2 = FromIndex(list, list->HoveredItemIndex3);
+            return ddi2 != null ? ddi2 : (AtkDragDropInterface*)null;
         }
 
         static AtkDragDropInterface* TryGetDdiFromComponent(AtkComponentBase* component)
@@ -118,7 +115,7 @@ internal static unsafe class DragDropHelpers
             if (component == null)
                 return null;
 
-            ComponentType t = component->GetComponentType();
+            var t = component->GetComponentType();
             return t switch
             {
                 ComponentType.DragDrop => &((AtkComponentDragDrop*)component)->AtkDragDropInterface,
@@ -130,7 +127,7 @@ internal static unsafe class DragDropHelpers
 
         // Prefer the drag-drop interface directly from event data when present.
         // IMPORTANT: only trust DragDropData for actual drag-drop event types; for MouseOver it can contain garbage.
-        bool isDragDropEvent =
+        var isDragDropEvent =
             eventType is AtkEventType.DragDropBegin or
                 AtkEventType.DragDropCanAcceptCheck or
                 AtkEventType.DragDropClick or
@@ -149,8 +146,8 @@ internal static unsafe class DragDropHelpers
         {
             try
             {
-                AtkComponentNode* compNode = eventData->DragDropData.ComponentNode;
-                AtkComponentBase* component = compNode->Component;
+                var compNode = eventData->DragDropData.ComponentNode;
+                var component = compNode->Component;
                 ddi = TryGetDdiFromComponent(component);
             }
             catch
@@ -165,20 +162,17 @@ internal static unsafe class DragDropHelpers
             AtkEvent* atkEvent = (AtkEvent*)recv.AtkEvent;
             if (atkEvent != null && atkEvent->Node != null)
             {
-                AtkResNode* node = atkEvent->Node;
-                AtkComponentNode* compNode = node->GetAsAtkComponentNode();
+                var node = atkEvent->Node;
+                var compNode = node->GetAsAtkComponentNode();
                 if (compNode != null)
                 {
-                    AtkComponentBase* component = compNode->Component;
+                    var component = compNode->Component;
                     ddi = TryGetDdiFromComponent(component);
                 }
             }
         }
 
-        if (ddi == null)
-            return false;
-
-        return true;
+        return ddi != null;
     }
 
     public static bool TryGetSlotFromDragDropInterface(
@@ -191,16 +185,13 @@ internal static unsafe class DragDropHelpers
         if (ddi == null)
             return false;
 
-        AtkDragDropPayloadContainer* payload = ddi->GetPayloadContainer();
+        var payload = ddi->GetPayloadContainer();
         if (payload == null)
             return false;
 
         invType = (InventoryType)payload->Int1;
         slot = payload->Int2;
-        if (slot < 0 || slot > 500)
-            return false;
-
-        return true;
+        return slot is not < 0 and not > 500;
     }
 
     public static bool TryGetSlotFromDragDropInterfaceForAddon(
@@ -246,7 +237,7 @@ internal static unsafe class DragDropHelpers
         // and Int1 may look like Inventory1..Inventory4 (0..3), which is clearly wrong for ArmouryBoard.
         if (!string.IsNullOrEmpty(addonName) &&
             addonName.Equals("ArmouryBoard", StringComparison.OrdinalIgnoreCase) &&
-            InventoryHelpers.TryGetVisibleAddon("ArmouryBoard", out AtkUnitBase* ab) &&
+            InventoryHelpers.TryGetVisibleAddon("ArmouryBoard", out var ab) &&
             ab != null &&
             ab->Id == addonId)
         {
@@ -257,36 +248,33 @@ internal static unsafe class DragDropHelpers
             }
         }
 
-        if (slot < 0 || slot > 500)
-            return false;
-
-        return true;
+        return slot is not < 0 and not > 500;
     }
 
     public static int PickContextMenuSlot(InventoryType type, int preferredSlot)
     {
         try
         {
-            InventoryManager* inv = InventoryManager.Instance();
+            var inv = InventoryManager.Instance();
             if (inv == null)
                 return preferredSlot;
 
-            InventoryContainer* c = inv->GetInventoryContainer(type);
+            var c = inv->GetInventoryContainer(type);
             if (c == null || !c->IsLoaded || c->Size <= 0)
                 return preferredSlot;
 
             // Prefer the hovered slot when in range AND it contains an item.
             if (preferredSlot >= 0 && preferredSlot < c->Size)
             {
-                InventoryItem* it0 = c->GetInventorySlot(preferredSlot);
+                var it0 = c->GetInventorySlot(preferredSlot);
                 if (it0 != null && it0->ItemId != 0)
                     return preferredSlot;
             }
 
             // Fallback: find the first slot with an item.
-            for(int i = 0; i < c->Size; i++)
+            for (var i = 0; i < c->Size; i++)
             {
-                InventoryItem* it = c->GetInventorySlot(i);
+                var it = c->GetInventorySlot(i);
                 if (it != null && it->ItemId != 0)
                     return i;
             }
@@ -315,19 +303,19 @@ internal static unsafe class DragDropHelpers
             if (containers.Length == 0)
                 return false;
 
-            InventoryManager* inv = InventoryManager.Instance();
+            var inv = InventoryManager.Instance();
             if (inv == null)
                 return false;
 
             List<int> candidates = new(capacity: 4) { rawInt2, rawInt1, refIdx };
-            foreach(int s in candidates.Distinct())
+            foreach (var s in candidates.Distinct())
             {
-                if (s < 0 || s > 500)
+                if (s is < 0 or > 500)
                     continue;
 
-                foreach(InventoryType t in containers)
+                foreach (var t in containers)
                 {
-                    InventoryItem* it = inv->GetInventorySlot(t, s);
+                    var it = inv->GetInventorySlot(t, s);
                     if (it != null && it->ItemId != 0)
                     {
                         type = t;
@@ -337,15 +325,15 @@ internal static unsafe class DragDropHelpers
                 }
             }
 
-            foreach(InventoryType t in containers)
+            foreach (var t in containers)
             {
-                InventoryContainer* c = inv->GetInventoryContainer(t);
+                var c = inv->GetInventoryContainer(t);
                 if (c == null || !c->IsLoaded || c->Size <= 0)
                     continue;
 
-                for(int i = 0; i < c->Size; i++)
+                for (var i = 0; i < c->Size; i++)
                 {
-                    InventoryItem* it = c->GetInventorySlot(i);
+                    var it = c->GetInventorySlot(i);
                     if (it != null && it->ItemId != 0)
                     {
                         type = t;
@@ -367,11 +355,11 @@ internal static unsafe class DragDropHelpers
     {
         if (list == null)
             return null;
-        if (idx < 0 || idx > 512)
+        if (idx is < 0 or > 512)
             return null;
         try
         {
-            AtkComponentListItemRenderer* r = list->GetItemRenderer(idx);
+            var r = list->GetItemRenderer(idx);
             return r != null ? &r->AtkDragDropInterface : null;
         }
         catch
@@ -387,7 +375,7 @@ internal static unsafe class DragDropHelpers
 
         try
         {
-            ComponentType t = component->GetComponentType();
+            var t = component->GetComponentType();
             return t switch
             {
                 ComponentType.DragDrop => &((AtkComponentDragDrop*)component)->AtkDragDropInterface,

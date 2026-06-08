@@ -34,8 +34,8 @@ internal static unsafe class AtkValueHelpers
         if (ptr == null)
             return string.Empty;
 
-        int len = 0;
-        while(ptr[len] != 0)
+        var len = 0;
+        while (ptr[len] != 0)
             len++;
 
         return len <= 0 ? string.Empty : Encoding.UTF8.GetString(ptr, len);
@@ -46,9 +46,9 @@ internal static unsafe class AtkValueHelpers
         if (dst == null || string.IsNullOrEmpty(value))
             return;
 
-        byte[] bytes = Encoding.UTF8.GetBytes(value);
-        int max = Math.Min(bytes.Length, 255);
-        for(int i = 0; i < max; i++)
+        var bytes = Encoding.UTF8.GetBytes(value);
+        var max = Math.Min(bytes.Length, 255);
+        for (var i = 0; i < max; i++)
             dst[i] = bytes[i];
         dst[max] = 0;
     }
@@ -71,9 +71,9 @@ internal static unsafe class AtkValueHelpers
 
         try
         {
-            for(int i = 0; i < values.Length; i++)
+            for (var i = 0; i < values.Length; i++)
             {
-                object v = values[i];
+                var v = values[i];
                 switch (v)
                 {
                     case uint u:
@@ -93,15 +93,15 @@ internal static unsafe class AtkValueHelpers
                         atkValues[i].Byte = (byte)(b ? 1 : 0);
                         break;
                     case string s:
-                    {
-                        atkValues[i].Type = AtkValueType.String;
-                        byte[] bytes = Encoding.UTF8.GetBytes(s);
-                        nint alloc = Marshal.AllocHGlobal(bytes.Length + 1);
-                        Marshal.Copy(bytes, 0, alloc, bytes.Length);
-                        Marshal.WriteByte(alloc, bytes.Length, 0);
-                        atkValues[i].String = (byte*)alloc;
-                        break;
-                    }
+                        {
+                            atkValues[i].Type = AtkValueType.String;
+                            var bytes = Encoding.UTF8.GetBytes(s);
+                            var alloc = Marshal.AllocHGlobal(bytes.Length + 1);
+                            Marshal.Copy(bytes, 0, alloc, bytes.Length);
+                            Marshal.WriteByte(alloc, bytes.Length, 0);
+                            atkValues[i].String = (byte*)alloc;
+                            break;
+                        }
                     default:
                         throw new ArgumentException($"Unsupported AtkValue type {v.GetType()}");
                 }
@@ -118,7 +118,7 @@ internal static unsafe class AtkValueHelpers
 
     public static void GenerateCallback(AtkUnitBase* unitBase, params object[] values)
     {
-        AtkValue* atkValues = CreateAtkValueArray(values);
+        var atkValues = CreateAtkValueArray(values);
         if (atkValues == null)
             return;
 
@@ -128,7 +128,7 @@ internal static unsafe class AtkValueHelpers
         }
         finally
         {
-            for(int i = 0; i < values.Length; i++)
+            for (var i = 0; i < values.Length; i++)
             {
                 if (atkValues[i].Type == AtkValueType.String)
                     Marshal.FreeHGlobal(new(atkValues[i].String));
@@ -145,7 +145,7 @@ internal static unsafe class AtkValueHelpers
         {
             if (values == null || idx < 0 || idx >= count)
                 return false;
-            AtkValue* v = values + idx;
+            var v = values + idx;
             if (v->Type == AtkValueType.Int)
             {
                 value = v->Int;
@@ -168,7 +168,7 @@ internal static unsafe class AtkValueHelpers
     {
         if (addon == null)
             return;
-        AtkResNode* root = addon->RootNode;
+        var root = addon->RootNode;
         if (root == null)
             return;
 
@@ -180,7 +180,7 @@ internal static unsafe class AtkValueHelpers
     {
         if (addon == null)
             return;
-        AtkResNode* root = addon->RootNode;
+        var root = addon->RootNode;
         if (root == null)
             return;
 

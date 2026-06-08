@@ -1,31 +1,36 @@
 <Project Sdk="Dalamud.NET.Sdk/15.0.0">
     <PropertyGroup>
-        <TargetFramework>net10.0-windows</TargetFramework>
-        <ImplicitUsings>enable</ImplicitUsings>
-        <Nullable>enable</Nullable>
-        <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-        <AssemblyName>QuickTransfer</AssemblyName>
-        <RootNamespace>QuickTransfer</RootNamespace>
-        <OutputType>Library</OutputType>
-        <IsPackable>false</IsPackable>
-        <Configurations>Debug;Release</Configurations>
-        <Platforms>x64</Platforms>
+        <Authors>flick, Kagekazu</Authors>
         <Version>1.1.0.0</Version>
-        <AssemblyVersion>1.1.0.0</AssemblyVersion>
-        <FileVersion>1.1.0.0</FileVersion>
+        <ImplicitUsings>enable</ImplicitUsings>
     </PropertyGroup>
 
-    <!-- Local builds: some setups have DALAMUD_HOME pointing at the XIVLauncher root,
-         not the actual dev hooks folder. If the resolved DalamudLibPath doesn't contain
-         Dalamud.dll, fall back to the standard Roaming dev hooks path. -->
-    <PropertyGroup Condition="$([MSBuild]::IsOSPlatform('Windows'))">
-        <_DalamudDevHooksPath>$(APPDATA)\XIVLauncher\addon\Hooks\dev\</_DalamudDevHooksPath>
+    <PropertyGroup>
+        <LangVersion>preview</LangVersion>
     </PropertyGroup>
-    <PropertyGroup Condition="$([MSBuild]::IsOSPlatform('Windows')) and Exists('$(_DalamudDevHooksPath)Dalamud.dll') and !Exists('$(DalamudLibPath)Dalamud.dll')">
-        <DalamudLibPath>$(_DalamudDevHooksPath)</DalamudLibPath>
+
+    <!-- Apply .editorconfig code-style (IDE*) and analyzers on Debug builds and when CI=true. -->
+    <PropertyGroup Condition="'$(Configuration)' == 'Debug' Or '$(CI)' == 'true'">
+        <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+        <EnableNETAnalyzers>true</EnableNETAnalyzers>
+        <AnalysisLevel>latest</AnalysisLevel>
+        <RunAnalyzersDuringBuild>true</RunAnalyzersDuringBuild>
     </PropertyGroup>
+
+    <PropertyGroup Condition="'$(OS)' != 'Windows_NT' OR '$(CI)' == 'true'">
+        <DalamudLibPath>$(DALAMUD_HOME)/</DalamudLibPath>
+    </PropertyGroup>
+
     <ItemGroup>
-        <PackageReference Update="DalamudPackager" Version="15.0.0"/>
-        <PackageReference Include="ECommons" Version="3.2.1.9" />
+        <PackageReference Include="ECommons" Version="3.2.1.9"/>
+    </ItemGroup>
+
+    <ItemGroup>
+        <None Update="QuickTransfer.json">
+            <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+        </None>
+        <None Include="images\icon.png">
+            <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+        </None>
     </ItemGroup>
 </Project>

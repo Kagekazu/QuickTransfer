@@ -1,22 +1,15 @@
 {
   "Author": "flick, Kagekazu",
   "Name": "QuickTransfer",
-  "InternalName": "QuickTransfer",
-  "AssemblyVersion": "1.1.0.0",
+  "Punchline": "Quick item transfer + split helpers.",
   "Description": "Automate inventory transfers with Shift/Ctrl/Alt + Right-Click. Trade window, vendor quick sell, FC chest.",
-  "ApplicableVersion": "any",
-  "RepoUrl": "https://github.com/Kagekazu/QuickTransfer",
+  "InternalName": "QuickTransfer",
   "IconUrl": "https://raw.githubusercontent.com/Kagekazu/QuickTransfer/main/images/icon.png",
+  "RepoUrl": "https://github.com/Kagekazu/QuickTransfer",
+  "DalamudApiLevel": 15,
   "Tags": [
     "inventory",
     "utility",
     "quality of life"
-  ],
-  "DalamudApiLevel": 15,
-  "LoadRequiredState": 0,
-  "LoadSync": false,
-  "CanUnloadAsync": false,
-  "LoadPriority": 0,
-  "Punchline": "Quick item transfer + split helpers.",
-  "AcceptsFeedback": true
+  ]
 }

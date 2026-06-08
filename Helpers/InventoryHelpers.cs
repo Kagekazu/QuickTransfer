@@ -2,7 +2,6 @@ using ECommons;
 using FFXIVClientStructs.FFXIV.Client.Game;
 using FFXIVClientStructs.FFXIV.Component.GUI;
 using Lumina.Excel.Sheets;
-
 namespace QuickTransfer;
 
 /// <summary>
@@ -37,8 +36,8 @@ internal static unsafe class InventoryHelpers
         InventoryType.RetainerPage7
     ];
 
-    private static readonly Dictionary<uint, uint> StackSizeCache = new();
-    private static readonly Dictionary<uint, uint> ItemUiCategoryCache = new();
+    private static readonly Dictionary<uint, uint> StackSizeCache = [];
+    private static readonly Dictionary<uint, uint> ItemUiCategoryCache = [];
 
     public static bool IsPlayerInventoryType(InventoryType inventoryType)
         => inventoryType is
@@ -85,22 +84,19 @@ internal static unsafe class InventoryHelpers
 
     public static bool IsCompanyChestType(InventoryType inventoryType)
     {
-        string? name = Enum.GetName(typeof(InventoryType), inventoryType);
-        if (string.IsNullOrEmpty(name))
-            return false;
-
-        return name.StartsWith("FreeCompanyPage", StringComparison.OrdinalIgnoreCase);
+        var name = Enum.GetName(inventoryType);
+        return !string.IsNullOrEmpty(name) && name.StartsWith("FreeCompanyPage", StringComparison.OrdinalIgnoreCase);
     }
 
     public static bool IsAddonVisible(string addonName, int index = 1)
     {
-        AtkUnitBase* addon = AddonHelpers.GetAddonByName(addonName, index);
+        var addon = AddonHelpers.GetAddonByName(addonName, index);
         return addon != null && addon->IsVisible;
     }
 
     public static bool IsAddonVisibleAnyIndex(string addonName, int maxIndex = 6)
     {
-        for(int i = 1; i <= maxIndex; i++)
+        for (var i = 1; i <= maxIndex; i++)
         {
             if (IsAddonVisible(addonName, i))
                 return true;
@@ -111,7 +107,7 @@ internal static unsafe class InventoryHelpers
 
     public static bool IsAnyAddonVisible(IEnumerable<string> addonNames, int index = 1)
     {
-        foreach(string name in addonNames)
+        foreach (var name in addonNames)
         {
             if (IsAddonVisible(name, index))
                 return true;
@@ -122,7 +118,7 @@ internal static unsafe class InventoryHelpers
 
     public static bool IsAnyAddonVisibleAnyIndex(IEnumerable<string> addonNames, int maxIndex = 6)
     {
-        foreach(string name in addonNames)
+        foreach (var name in addonNames)
         {
             if (IsAddonVisibleAnyIndex(name, maxIndex))
                 return true;
@@ -133,8 +129,8 @@ internal static unsafe class InventoryHelpers
 
     public static bool IsInventoryAndSaddlebagOpen()
     {
-        bool inventoryOpen = IsAddonVisibleAnyIndex("Inventory");
-        bool saddlebagOpen = IsAddonVisibleAnyIndex("InventoryBuddy") || IsAddonVisibleAnyIndex("InventoryBuddy2");
+        var inventoryOpen = IsAddonVisibleAnyIndex("Inventory");
+        var saddlebagOpen = IsAddonVisibleAnyIndex("InventoryBuddy") || IsAddonVisibleAnyIndex("InventoryBuddy2");
         return inventoryOpen && saddlebagOpen;
     }
 
@@ -169,11 +165,11 @@ internal static unsafe class InventoryHelpers
         isHq = false;
         quantity = 0;
 
-        InventoryManager* inv = InventoryManager.Instance();
+        var inv = InventoryManager.Instance();
         if (inv == null)
             return false;
 
-        InventoryItem* it = inv->GetInventorySlot(type, slot);
+        var it = inv->GetInventorySlot(type, slot);
         if (it == null)
             return false;
 
@@ -189,7 +185,7 @@ internal static unsafe class InventoryHelpers
         {
             if (inv == null)
                 return false;
-            InventoryContainer* c = inv->GetInventoryContainer(type);
+            var c = inv->GetInventoryContainer(type);
             return c != null && c->IsLoaded && c->Size > 0;
         }
         catch
@@ -209,18 +205,18 @@ internal static unsafe class InventoryHelpers
             if (itemId == 0)
                 return 1;
 
-            lock(StackSizeCache)
+            lock (StackSizeCache)
             {
-                if (StackSizeCache.TryGetValue(itemId, out uint cached))
+                if (StackSizeCache.TryGetValue(itemId, out var cached))
                     return cached;
             }
 
-            if (!GenericHelpers.TryGetRow<Item>(itemId, out Item row) || row.RowId == 0)
+            if (!GenericHelpers.TryGetRow(itemId, out Item row) || row.RowId == 0)
                 return 999;
 
-            uint s = row.StackSize;
-            uint result = s <= 0 ? 1U : s;
-            lock(StackSizeCache)
+            var s = row.StackSize;
+            var result = s <= 0 ? 1U : s;
+            lock (StackSizeCache)
             {
                 StackSizeCache[itemId] = result;
             }
@@ -239,13 +235,13 @@ internal static unsafe class InventoryHelpers
             if (itemId == 0)
                 return 0;
 
-            lock(ItemUiCategoryCache)
+            lock (ItemUiCategoryCache)
             {
-                if (ItemUiCategoryCache.TryGetValue(itemId, out uint cached))
+                if (ItemUiCategoryCache.TryGetValue(itemId, out var cached))
                     return cached;
             }
 
-            if (!GenericHelpers.TryGetRow<Item>(itemId, out Item row) || row.RowId == 0)
+            if (!GenericHelpers.TryGetRow(itemId, out Item row) || row.RowId == 0)
                 return 0;
 
             uint result;
@@ -258,7 +254,7 @@ internal static unsafe class InventoryHelpers
                 result = 0;
             }
 
-            lock(ItemUiCategoryCache)
+            lock (ItemUiCategoryCache)
             {
                 ItemUiCategoryCache[itemId] = result;
             }

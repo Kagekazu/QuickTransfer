@@ -1,5 +1,4 @@
 using Dalamud.Configuration;
-
 namespace QuickTransfer;
 
 [Serializable]
@@ -21,5 +20,5 @@ public sealed class Configuration : IPluginConfiguration
     public bool AutoConfirmVendorSell { get; set; } = true;
     public int Version { get; set; } = 3;
 
-    public void Save() => Plugin.PluginInterface.SavePluginConfig(this);
+    public void Save() => Svc.PluginInterface.SavePluginConfig(this);
 }

@@ -1,19 +1,6 @@
-﻿using Dalamud.Game.Chat;
-using Dalamud.Game.ClientState.Keys;
-using ECommons;
-using ECommons.UIHelpers.AddonMasterImplementations;
-using FFXIVClientStructs.FFXIV.Client.Game;
-using FFXIVClientStructs.FFXIV.Client.System.String;
-using FFXIVClientStructs.FFXIV.Client.UI;
+﻿using FFXIVClientStructs.FFXIV.Client.Game;
 using FFXIVClientStructs.FFXIV.Client.UI.Agent;
 using FFXIVClientStructs.FFXIV.Component.GUI;
-using InteropGenerator.Runtime;
-using System.Runtime.InteropServices;
-using System.Text;
-using AtkValueType = FFXIVClientStructs.FFXIV.Component.GUI.AtkValueType;
-using AutoContextAction = QuickTransfer.ContextMenuHandler.AutoContextAction;
-using ModifierMode = QuickTransfer.ContextMenuHandler.ModifierMode;
-
 namespace QuickTransfer;
 
 public sealed unsafe partial class Plugin
@@ -22,11 +9,11 @@ public sealed unsafe partial class Plugin
     {
         try
         {
-            AtkStage* stage = AtkStage.Instance();
+            var stage = AtkStage.Instance();
             if (stage == null || stage->AtkCollisionManager == null)
                 return false;
 
-            AtkUnitBase* hit = stage->AtkCollisionManager->IntersectingAddon;
+            var hit = stage->AtkCollisionManager->IntersectingAddon;
             if (hit == null || hit->Id == 0)
                 return false;
 
@@ -40,7 +27,7 @@ public sealed unsafe partial class Plugin
                 id = 0;
                 try
                 {
-                    if (InventoryHelpers.TryGetVisibleAddon(name, out AtkUnitBase* a, QuickTransferConstants.WideAddonSearchMaxIndex) && a != null && a->Id != 0)
+                    if (InventoryHelpers.TryGetVisibleAddon(name, out var a, QuickTransferConstants.WideAddonSearchMaxIndex) && a != null && a->Id != 0)
                     {
                         id = a->Id;
                         return true;
@@ -57,7 +44,7 @@ public sealed unsafe partial class Plugin
             Dictionary<uint, string> visibleById = new(capacity: 16);
             void AddVisible(string name)
             {
-                if (TryGetVisibleAddonId(name, out uint id) && id != 0)
+                if (TryGetVisibleAddonId(name, out var id) && id != 0)
                 {
                     // Don't overwrite an existing mapping. This prevents rare mis-labeling if an alias query
                     // accidentally returns an unexpected addon that reuses an id already mapped earlier.
@@ -72,7 +59,7 @@ public sealed unsafe partial class Plugin
             AddVisible("RetainerGrid");
             AddVisible("RetainerSellList");
             AddVisible(QuickTransferConstants.FreeCompanyChestAddonName);
-            foreach(string n in QuickTransferConstants.ArmouryAddonNames)
+            foreach (var n in QuickTransferConstants.ArmouryAddonNames)
                 AddVisible(n);
 
             uint hitId = hit->Id;
@@ -80,14 +67,14 @@ public sealed unsafe partial class Plugin
             uint parentId = hit->ParentId;
 
             uint ownerId = 0;
-            string ownerName = string.Empty;
-            string ownerSource = string.Empty;
+            var ownerName = string.Empty;
+            var ownerSource = string.Empty;
 
             bool Pick(uint id)
             {
                 if (id == 0)
                     return false;
-                if (!visibleById.TryGetValue(id, out string? n))
+                if (!visibleById.TryGetValue(id, out var n))
                     return false;
                 ownerId = id;
                 ownerName = n;
@@ -106,21 +93,19 @@ public sealed unsafe partial class Plugin
                         return "InventoryBuddy";
                     if (InventoryHelpers.IsArmouryType(t))
                         return "ArmouryBoard";
-                    if (InventoryHelpers.IsCompanyChestType(t))
-                        return QuickTransferConstants.FreeCompanyChestAddonName;
-                    if (InventoryHelpers.IsRetainerType(t))
-                        return "RetainerGrid0";
-                    return string.Empty;
+                    return InventoryHelpers.IsCompanyChestType(t)
+                        ? QuickTransferConstants.FreeCompanyChestAddonName
+                        : InventoryHelpers.IsRetainerType(t) ? "RetainerGrid0" : string.Empty;
                 }
 
                 bool PickFromLastGood(uint id)
                 {
                     if (id == 0)
                         return false;
-                    if (!lastGoodContextTargetByAddonId.TryGetValue(id, out (InventoryType Type, int Slot, int A4) good))
+                    if (!lastGoodContextTargetByAddonId.TryGetValue(id, out var good))
                         return false;
 
-                    string inferred = InferOwnerNameFromInvType(good.Type);
+                    var inferred = InferOwnerNameFromInvType(good.Type);
                     if (string.IsNullOrEmpty(inferred))
                         return false;
 
@@ -148,7 +133,7 @@ public sealed unsafe partial class Plugin
                         if (Configuration.DebugMode && now - lastCursorHitTestLogMs >= 1000)
                         {
                             lastCursorHitTestLogMs = now;
-                            Log.Information($"[QuickTransfer] (MMB) CollisionManager hit addonId={hitId} hostId={hostId} parentId={parentId} (unmapped). Visible owners=[{string.Join(", ", visibleById.Select(kv => $"{kv.Value}:{kv.Key}"))}] lastGoodOwnerIds=[{string.Join(", ", lastGoodContextTargetByAddonId.Keys.Take(24))}]");
+                            Svc.Log.Information($"[QuickTransfer] (MMB) CollisionManager hit addonId={hitId} hostId={hostId} parentId={parentId} (unmapped). Visible owners=[{string.Join(", ", visibleById.Select(kv => $"{kv.Value}:{kv.Key}"))}] lastGoodOwnerIds=[{string.Join(", ", lastGoodContextTargetByAddonId.Keys.Take(24))}]");
                         }
                         return false;
                     }
@@ -160,7 +145,7 @@ public sealed unsafe partial class Plugin
             if (Configuration.DebugMode && now - lastCursorHitTestLogMs >= 1000)
             {
                 lastCursorHitTestLogMs = now;
-                Log.Information($"[QuickTransfer] (MMB) CollisionManager picked addon '{ownerName}' (ownerAddonId={ownerId}, hitAddonId={hitId}, source={ownerSource}).");
+                Svc.Log.Information($"[QuickTransfer] (MMB) CollisionManager picked addon '{ownerName}' (ownerAddonId={ownerId}, hitAddonId={hitId}, source={ownerSource}).");
             }
 
             return true;
@@ -179,11 +164,11 @@ public sealed unsafe partial class Plugin
             if (TryUpdateLastHoverAddonFromCollisionManager(now))
                 return true;
 
-            if (!CursorHoverHelpers.TryGetClientCursorPos(out short x, out short y))
+            if (!CursorHoverHelpers.TryGetClientCursorPos(out var x, out var y))
                 return false;
 
             AtkUnitBase* best = null;
-            string bestName = string.Empty;
+            var bestName = string.Empty;
             uint bestId = 0;
             uint bestDepth = 0;
             ushort bestDraw = 0;
@@ -201,9 +186,9 @@ public sealed unsafe partial class Plugin
                     if (!a->CheckWindowCollisionAtCoords(x, y))
                         return;
 
-                    uint depth = a->DepthLayer;
-                    ushort draw = a->DrawOrderIndex;
-                    if (best == null || depth > bestDepth || (depth == bestDepth && draw > bestDraw))
+                    var depth = a->DepthLayer;
+                    var draw = a->DrawOrderIndex;
+                    if (best == null || depth > bestDepth || depth == bestDepth && draw > bestDraw)
                     {
                         best = a;
                         bestName = name ?? string.Empty;
@@ -218,27 +203,27 @@ public sealed unsafe partial class Plugin
                 }
             }
 
-            if (InventoryHelpers.TryGetVisibleAddon("Inventory", out AtkUnitBase* inv) && inv != null)
+            if (InventoryHelpers.TryGetVisibleAddon("Inventory", out var inv) && inv != null)
                 Consider("Inventory", inv);
 
-            if (InventoryHelpers.TryGetVisibleAddon("InventoryBuddy", out AtkUnitBase* sb) && sb != null)
+            if (InventoryHelpers.TryGetVisibleAddon("InventoryBuddy", out var sb) && sb != null)
                 Consider("InventoryBuddy", sb);
-            if (InventoryHelpers.TryGetVisibleAddon("InventoryBuddy2", out AtkUnitBase* sb2) && sb2 != null)
+            if (InventoryHelpers.TryGetVisibleAddon("InventoryBuddy2", out var sb2) && sb2 != null)
                 Consider("InventoryBuddy2", sb2);
 
-            if (InventoryHelpers.TryGetVisibleAddon("RetainerGrid0", out AtkUnitBase* rg0, QuickTransferConstants.WideAddonSearchMaxIndex) && rg0 != null)
+            if (InventoryHelpers.TryGetVisibleAddon("RetainerGrid0", out var rg0, QuickTransferConstants.WideAddonSearchMaxIndex) && rg0 != null)
                 Consider("RetainerGrid0", rg0);
-            if (InventoryHelpers.TryGetVisibleAddon("RetainerGrid", out AtkUnitBase* rg, QuickTransferConstants.WideAddonSearchMaxIndex) && rg != null)
+            if (InventoryHelpers.TryGetVisibleAddon("RetainerGrid", out var rg, QuickTransferConstants.WideAddonSearchMaxIndex) && rg != null)
                 Consider("RetainerGrid", rg);
-            if (InventoryHelpers.TryGetVisibleAddon("RetainerSellList", out AtkUnitBase* rsl, QuickTransferConstants.WideAddonSearchMaxIndex) && rsl != null)
+            if (InventoryHelpers.TryGetVisibleAddon("RetainerSellList", out var rsl, QuickTransferConstants.WideAddonSearchMaxIndex) && rsl != null)
                 Consider("RetainerSellList", rsl);
 
-            if (InventoryHelpers.TryGetVisibleAddon(QuickTransferConstants.FreeCompanyChestAddonName, out AtkUnitBase* fcc, QuickTransferConstants.WideAddonSearchMaxIndex) && fcc != null)
+            if (InventoryHelpers.TryGetVisibleAddon(QuickTransferConstants.FreeCompanyChestAddonName, out var fcc, QuickTransferConstants.WideAddonSearchMaxIndex) && fcc != null)
                 Consider(QuickTransferConstants.FreeCompanyChestAddonName, fcc);
 
-            foreach(string n in QuickTransferConstants.ArmouryAddonNames)
+            foreach (var n in QuickTransferConstants.ArmouryAddonNames)
             {
-                if (InventoryHelpers.TryGetVisibleAddon(n, out AtkUnitBase* ab) && ab != null)
+                if (InventoryHelpers.TryGetVisibleAddon(n, out var ab) && ab != null)
                     Consider(n, ab);
             }
 
@@ -250,7 +235,7 @@ public sealed unsafe partial class Plugin
             if (Configuration.DebugMode && now - lastCursorHitTestLogMs >= 1000)
             {
                 lastCursorHitTestLogMs = now;
-                Log.Information($"[QuickTransfer] (MMB) Cursor hit-test picked addon '{bestName}' (addonId={bestId}) at ({x},{y}).");
+                Svc.Log.Information($"[QuickTransfer] (MMB) Cursor hit-test picked addon '{bestName}' (addonId={bestId}) at ({x},{y}).");
             }
 
             return true;
@@ -267,16 +252,16 @@ public sealed unsafe partial class Plugin
         {
             // If multiple inventory windows are open, we can't know which one the cursor is over without a hover DDI.
             // In that case, refuse and require hover capture.
-            int visibleCount = 0;
+            var visibleCount = 0;
 
             InventoryType chosenType = default;
-            int chosenSlot = -1;
+            var chosenSlot = -1;
             uint chosenAddonId = 0;
 
             // ArmouryBoard
-            if (InventoryHelpers.TryGetVisibleAddon("ArmouryBoard", out AtkUnitBase* ab, QuickTransferConstants.WideAddonSearchMaxIndex) && ab != null)
+            if (InventoryHelpers.TryGetVisibleAddon("ArmouryBoard", out var ab, QuickTransferConstants.WideAddonSearchMaxIndex) && ab != null)
             {
-                if (DragDropHelpers.TryResolveTargetFromWeirdPayload(DragDropHelpers.ArmouryBoardIndexToType, -1, -1, -1, out InventoryType t, out int s))
+                if (DragDropHelpers.TryResolveTargetFromWeirdPayload(DragDropHelpers.ArmouryBoardIndexToType, -1, -1, -1, out var t, out var s))
                 {
                     visibleCount++;
                     chosenType = t;
@@ -286,9 +271,9 @@ public sealed unsafe partial class Plugin
             }
 
             // Saddlebags
-            if (InventoryHelpers.TryGetVisibleAddon("InventoryBuddy", out AtkUnitBase* sb, QuickTransferConstants.WideAddonSearchMaxIndex) && sb != null)
+            if (InventoryHelpers.TryGetVisibleAddon("InventoryBuddy", out var sb, QuickTransferConstants.WideAddonSearchMaxIndex) && sb != null)
             {
-                if (DragDropHelpers.TryResolveTargetFromWeirdPayload(QuickTransferConstants.SaddlebagInventoryTypes, -1, -1, -1, out InventoryType t, out int s))
+                if (DragDropHelpers.TryResolveTargetFromWeirdPayload(QuickTransferConstants.SaddlebagInventoryTypes, -1, -1, -1, out var t, out var s))
                 {
                     visibleCount++;
                     chosenType = t;
@@ -296,9 +281,9 @@ public sealed unsafe partial class Plugin
                     chosenAddonId = sb->Id;
                 }
             }
-            else if (InventoryHelpers.TryGetVisibleAddon("InventoryBuddy2", out AtkUnitBase* sb2, QuickTransferConstants.WideAddonSearchMaxIndex) && sb2 != null)
+            else if (InventoryHelpers.TryGetVisibleAddon("InventoryBuddy2", out var sb2, QuickTransferConstants.WideAddonSearchMaxIndex) && sb2 != null)
             {
-                if (DragDropHelpers.TryResolveTargetFromWeirdPayload(QuickTransferConstants.SaddlebagInventoryTypes, -1, -1, -1, out InventoryType t, out int s))
+                if (DragDropHelpers.TryResolveTargetFromWeirdPayload(QuickTransferConstants.SaddlebagInventoryTypes, -1, -1, -1, out var t, out var s))
                 {
                     visibleCount++;
                     chosenType = t;
@@ -308,9 +293,9 @@ public sealed unsafe partial class Plugin
             }
 
             // Player inventory
-            if (InventoryHelpers.TryGetVisibleAddon("Inventory", out AtkUnitBase* inv, QuickTransferConstants.WideAddonSearchMaxIndex) && inv != null)
+            if (InventoryHelpers.TryGetVisibleAddon("Inventory", out var inv, QuickTransferConstants.WideAddonSearchMaxIndex) && inv != null)
             {
-                if (DragDropHelpers.TryResolveTargetFromWeirdPayload(QuickTransferConstants.PlayerInventoryTypes, -1, -1, -1, out InventoryType t, out int s))
+                if (DragDropHelpers.TryResolveTargetFromWeirdPayload(QuickTransferConstants.PlayerInventoryTypes, -1, -1, -1, out var t, out var s))
                 {
                     visibleCount++;
                     chosenType = t;
@@ -320,9 +305,9 @@ public sealed unsafe partial class Plugin
             }
 
             // Retainer inventory
-            if (InventoryHelpers.TryGetVisibleAddon("RetainerGrid0", out AtkUnitBase* rg0, QuickTransferConstants.WideAddonSearchMaxIndex) && rg0 != null)
+            if (InventoryHelpers.TryGetVisibleAddon("RetainerGrid0", out var rg0, QuickTransferConstants.WideAddonSearchMaxIndex) && rg0 != null)
             {
-                if (DragDropHelpers.TryResolveTargetFromWeirdPayload(QuickTransferConstants.RetainerInventoryTypes, -1, -1, -1, out InventoryType t, out int s))
+                if (DragDropHelpers.TryResolveTargetFromWeirdPayload(QuickTransferConstants.RetainerInventoryTypes, -1, -1, -1, out var t, out var s))
                 {
                     visibleCount++;
                     chosenType = t;
@@ -330,9 +315,9 @@ public sealed unsafe partial class Plugin
                     chosenAddonId = rg0->Id;
                 }
             }
-            else if (InventoryHelpers.TryGetVisibleAddon("RetainerGrid", out AtkUnitBase* rg, QuickTransferConstants.WideAddonSearchMaxIndex) && rg != null)
+            else if (InventoryHelpers.TryGetVisibleAddon("RetainerGrid", out var rg, QuickTransferConstants.WideAddonSearchMaxIndex) && rg != null)
             {
-                if (DragDropHelpers.TryResolveTargetFromWeirdPayload(QuickTransferConstants.RetainerInventoryTypes, -1, -1, -1, out InventoryType t, out int s))
+                if (DragDropHelpers.TryResolveTargetFromWeirdPayload(QuickTransferConstants.RetainerInventoryTypes, -1, -1, -1, out var t, out var s))
                 {
                     visibleCount++;
                     chosenType = t;
@@ -340,9 +325,9 @@ public sealed unsafe partial class Plugin
                     chosenAddonId = rg->Id;
                 }
             }
-            else if (InventoryHelpers.TryGetVisibleAddon("RetainerSellList", out AtkUnitBase* rsl, QuickTransferConstants.WideAddonSearchMaxIndex) && rsl != null)
+            else if (InventoryHelpers.TryGetVisibleAddon("RetainerSellList", out var rsl, QuickTransferConstants.WideAddonSearchMaxIndex) && rsl != null)
             {
-                if (DragDropHelpers.TryResolveTargetFromWeirdPayload(QuickTransferConstants.RetainerInventoryTypes, -1, -1, -1, out InventoryType t, out int s))
+                if (DragDropHelpers.TryResolveTargetFromWeirdPayload(QuickTransferConstants.RetainerInventoryTypes, -1, -1, -1, out var t, out var s))
                 {
                     visibleCount++;
                     chosenType = t;
@@ -352,9 +337,9 @@ public sealed unsafe partial class Plugin
             }
 
             // Free Company Chest (no native Sort context menu; MMB triggers our organize pass)
-            if (InventoryHelpers.TryGetVisibleAddon(QuickTransferConstants.FreeCompanyChestAddonName, out AtkUnitBase* fcc, QuickTransferConstants.WideAddonSearchMaxIndex) && fcc != null)
+            if (InventoryHelpers.TryGetVisibleAddon(QuickTransferConstants.FreeCompanyChestAddonName, out var fcc, QuickTransferConstants.WideAddonSearchMaxIndex) && fcc != null)
             {
-                (InventoryType Page, uint AddonId, long SeenAtMs)? lp = lastHoverCompanyChestPage;
+                var lp = lastHoverCompanyChestPage;
                 if (lp != null && lp.Value.AddonId == fcc->Id && now - lp.Value.SeenAtMs <= 20000 && InventoryHelpers.IsCompanyChestType(lp.Value.Page))
                 {
                     visibleCount++;
@@ -364,7 +349,7 @@ public sealed unsafe partial class Plugin
                 }
                 else
                 {
-                    (InventoryType Page, uint AddonId, long SeenAtMs)? sp = lastSelectedCompanyChestPage;
+                    var sp = lastSelectedCompanyChestPage;
                     if (sp != null && sp.Value.AddonId == fcc->Id && now - sp.Value.SeenAtMs <= 20000 && InventoryHelpers.IsCompanyChestType(sp.Value.Page))
                     {
                         visibleCount++;
@@ -374,7 +359,7 @@ public sealed unsafe partial class Plugin
                     }
                     else
                     {
-                        InventoryType[] pages = GetCompanyChestInventoryTypes();
+                        var pages = GetCompanyChestInventoryTypes();
                         if (pages.Length > 0)
                         {
                             visibleCount++;
@@ -389,13 +374,13 @@ public sealed unsafe partial class Plugin
             if (visibleCount != 1 || chosenAddonId == 0 || chosenSlot < 0)
                 return false;
 
-            int openSlot = DragDropHelpers.PickContextMenuSlot(chosenType, chosenSlot);
+            var openSlot = DragDropHelpers.PickContextMenuSlot(chosenType, chosenSlot);
             pendingMiddleClickSortRequest = (chosenType, openSlot, chosenAddonId, now);
             pendingMiddleClickSortUntilMs = now + 1500;
             lastMiddleClickSortMs = now;
 
             if (Configuration.DebugMode)
-                Log.Information($"[QuickTransfer] (MMB) No hover DDI; bootstrapped from visible window: {chosenType} slot={openSlot} addonId={chosenAddonId}");
+                Svc.Log.Information($"[QuickTransfer] (MMB) No hover DDI; bootstrapped from visible window: {chosenType} slot={openSlot} addonId={chosenAddonId}");
 
             return true;
         }
@@ -409,12 +394,12 @@ public sealed unsafe partial class Plugin
     {
         try
         {
-            (string AddonName, uint AddonId, long SeenAtMs)? h = lastHoverAddon;
+            var h = lastHoverAddon;
             if (h == null || now - h.Value.SeenAtMs > 20000)
                 return false;
 
-            string addonName = h.Value.AddonName;
-            uint addonId = h.Value.AddonId;
+            var addonName = h.Value.AddonName;
+            var addonId = h.Value.AddonId;
 
             ReadOnlySpan<InventoryType> containers = default;
             if (addonName.Equals("Inventory", StringComparison.OrdinalIgnoreCase))
@@ -434,61 +419,61 @@ public sealed unsafe partial class Plugin
 
                 // First preference: read the currently displayed page directly from the addon via a payload probe.
                 // This avoids relying on tab ButtonClick params, which vary across clients/builds.
-                if (InventoryHelpers.TryGetVisibleAddon(QuickTransferConstants.FreeCompanyChestAddonName, out AtkUnitBase* fcc, QuickTransferConstants.WideAddonSearchMaxIndex) &&
+                if (InventoryHelpers.TryGetVisibleAddon(QuickTransferConstants.FreeCompanyChestAddonName, out var fcc, QuickTransferConstants.WideAddonSearchMaxIndex) &&
                     fcc != null &&
                     fcc->Id == addonId &&
-                    TryResolveCompanyChestPageFromAddon(fcc, out InventoryType curPage) &&
+                    TryResolveCompanyChestPageFromAddon(fcc, out var curPage) &&
                     InventoryHelpers.IsCompanyChestType(curPage))
                 {
                     pendingMiddleClickSortRequest = (curPage, 0, addonId, now);
                     pendingMiddleClickSortUntilMs = now + 1500;
                     lastMiddleClickSortMs = now;
                     if (Configuration.DebugMode)
-                        Log.Information($"[QuickTransfer] (MMB) Resolved active Company Chest tab from payload: {curPage} (addonId={addonId})");
+                        Svc.Log.Information($"[QuickTransfer] (MMB) Resolved active Company Chest tab from payload: {curPage} (addonId={addonId})");
                     return true;
                 }
-                if (Configuration.DebugMode && InventoryHelpers.TryGetVisibleAddon(QuickTransferConstants.FreeCompanyChestAddonName, out AtkUnitBase* fccDbg, QuickTransferConstants.WideAddonSearchMaxIndex) && fccDbg != null && fccDbg->Id == addonId)
+                if (Configuration.DebugMode && InventoryHelpers.TryGetVisibleAddon(QuickTransferConstants.FreeCompanyChestAddonName, out var fccDbg, QuickTransferConstants.WideAddonSearchMaxIndex) && fccDbg != null && fccDbg->Id == addonId)
                 {
                     // Diagnostic: we expected to be able to infer the active page from visible payloads, but couldn't.
                     // This helps identify whether the probe is failing entirely or just returning a non-page payload.
-                    Log.Information("[QuickTransfer] (MMB) Company Chest payload tab probe failed; falling back to hover/selected tab.");
+                    Svc.Log.Information("[QuickTransfer] (MMB) Company Chest payload tab probe failed; falling back to hover/selected tab.");
                 }
 
-                (InventoryType Page, uint AddonId, long SeenAtMs)? lp = lastHoverCompanyChestPage;
+                var lp = lastHoverCompanyChestPage;
                 if (lp != null && lp.Value.AddonId == addonId && now - lp.Value.SeenAtMs <= companyChestTabMaxAgeMs && InventoryHelpers.IsCompanyChestType(lp.Value.Page))
                 {
                     pendingMiddleClickSortRequest = (lp.Value.Page, 0, addonId, now);
                     pendingMiddleClickSortUntilMs = now + 1500;
                     lastMiddleClickSortMs = now;
                     if (Configuration.DebugMode)
-                        Log.Information($"[QuickTransfer] (MMB) Using last-hovered Company Chest tab: {lp.Value.Page} slot=0 addonId={addonId}");
+                        Svc.Log.Information($"[QuickTransfer] (MMB) Using last-hovered Company Chest tab: {lp.Value.Page} slot=0 addonId={addonId}");
                     return true;
                 }
 
-                (InventoryType Page, uint AddonId, long SeenAtMs)? sp = lastSelectedCompanyChestPage;
+                var sp = lastSelectedCompanyChestPage;
                 if (sp != null && sp.Value.AddonId == addonId && now - sp.Value.SeenAtMs <= companyChestTabMaxAgeMs && InventoryHelpers.IsCompanyChestType(sp.Value.Page))
                 {
                     pendingMiddleClickSortRequest = (sp.Value.Page, 0, addonId, now);
                     pendingMiddleClickSortUntilMs = now + 1500;
                     lastMiddleClickSortMs = now;
                     if (Configuration.DebugMode)
-                        Log.Information($"[QuickTransfer] (MMB) Using selected Company Chest tab: {sp.Value.Page} slot=0 addonId={addonId}");
+                        Svc.Log.Information($"[QuickTransfer] (MMB) Using selected Company Chest tab: {sp.Value.Page} slot=0 addonId={addonId}");
                     return true;
                 }
 
-                if (TryResolveCompanyChestSelectedPageFromAtkValues(addonId, out InventoryType atkPage))
+                if (TryResolveCompanyChestSelectedPageFromAtkValues(addonId, out var atkPage))
                 {
                     pendingMiddleClickSortRequest = (atkPage, 0, addonId, now);
                     pendingMiddleClickSortUntilMs = now + 1500;
                     lastMiddleClickSortMs = now;
                     if (Configuration.DebugMode)
-                        Log.Information($"[QuickTransfer] (MMB) Using Company Chest tab from AtkValues: {atkPage} slot=0 addonId={addonId}");
+                        Svc.Log.Information($"[QuickTransfer] (MMB) Using Company Chest tab from AtkValues: {atkPage} slot=0 addonId={addonId}");
                     return true;
                 }
 
                 // If we couldn't infer the selected tab, do NOT guess (guessing Page1 is what causes "I clicked tab 2 but it sorted tab 1").
                 if (Configuration.DebugMode)
-                    Log.Information("[QuickTransfer] (MMB) Company Chest tab unknown; no action taken (waiting for a tab click or hover).");
+                    Svc.Log.Information("[QuickTransfer] (MMB) Company Chest tab unknown; no action taken (waiting for a tab click or hover).");
                 return false;
             }
             else if (QuickTransferConstants.ArmouryAddonNames.Any(n => addonName.Equals(n, StringComparison.OrdinalIgnoreCase)))
@@ -498,27 +483,27 @@ public sealed unsafe partial class Plugin
                 return false;
 
             // Prefer last known-good context target when available (more likely to produce a menu).
-            if (lastGoodContextTargetByAddonId.TryGetValue(addonId, out (InventoryType Type, int Slot, int A4) good) &&
+            if (lastGoodContextTargetByAddonId.TryGetValue(addonId, out var good) &&
                 (InventoryHelpers.IsPlayerInventoryType(good.Type) || InventoryHelpers.IsArmouryType(good.Type) || InventoryHelpers.IsSaddlebagType(good.Type) || InventoryHelpers.IsRetainerType(good.Type) || InventoryHelpers.IsCompanyChestType(good.Type)))
             {
-                int openSlot = DragDropHelpers.PickContextMenuSlot(good.Type, good.Slot);
+                var openSlot = DragDropHelpers.PickContextMenuSlot(good.Type, good.Slot);
                 pendingMiddleClickSortRequest = (good.Type, openSlot, addonId, now);
                 pendingMiddleClickSortUntilMs = now + 1500;
                 lastMiddleClickSortMs = now;
                 if (Configuration.DebugMode)
-                    Log.Information($"[QuickTransfer] (MMB) Using last-good target for hovered addon '{addonName}': {good.Type} slot={openSlot} addonId={addonId}");
+                    Svc.Log.Information($"[QuickTransfer] (MMB) Using last-good target for hovered addon '{addonName}': {good.Type} slot={openSlot} addonId={addonId}");
                 return true;
             }
 
-            if (!DragDropHelpers.TryResolveTargetFromWeirdPayload(containers, -1, -1, -1, out InventoryType type, out int slot))
+            if (!DragDropHelpers.TryResolveTargetFromWeirdPayload(containers, -1, -1, -1, out var type, out var slot))
                 return false;
 
-            int openSlot2 = DragDropHelpers.PickContextMenuSlot(type, slot);
+            var openSlot2 = DragDropHelpers.PickContextMenuSlot(type, slot);
             pendingMiddleClickSortRequest = (type, openSlot2, addonId, now);
             pendingMiddleClickSortUntilMs = now + 1500;
             lastMiddleClickSortMs = now;
             if (Configuration.DebugMode)
-                Log.Information($"[QuickTransfer] (MMB) Bootstrapped from hovered addon '{addonName}': {type} slot={openSlot2} addonId={addonId}");
+                Svc.Log.Information($"[QuickTransfer] (MMB) Bootstrapped from hovered addon '{addonName}': {type} slot={openSlot2} addonId={addonId}");
             return true;
         }
         catch
@@ -535,7 +520,7 @@ public sealed unsafe partial class Plugin
         if (now - lastMiddleClickSortMs < 250)
             return;
 
-        (nint DdiPtr, uint AddonId, long SeenAtMs)? hDdi = lastHoverDdi;
+        var hDdi = lastHoverDdi;
         // Rollover events only fire when moving the cursor; keep a generous window so MMB works while stationary.
         if (hDdi == null || now - hDdi.Value.SeenAtMs > 20000)
         {
@@ -549,13 +534,13 @@ public sealed unsafe partial class Plugin
             if (TryQueueMiddleClickSortFromVisibleWindows(now))
                 return;
             if (Configuration.DebugMode)
-                Log.Information("[QuickTransfer] (MMB) No recent hover slot/dragdrop captured; cannot queue sort.");
+                Svc.Log.Information("[QuickTransfer] (MMB) No recent hover slot/dragdrop captured; cannot queue sort.");
             return;
         }
 
         try
         {
-            uint ddiAddonId = hDdi.Value.AddonId;
+            var ddiAddonId = hDdi.Value.AddonId;
 
             // Key rule for stability across windows:
             // - A stored hover DDI can be stale if the UI doesn't emit MouseOut/RollOut events (common for Inventory/Saddlebags).
@@ -564,7 +549,7 @@ public sealed unsafe partial class Plugin
             //
             // Armoury remains stable because the collision manager typically also reports it correctly, and we no longer
             // let stale "lastHoverAddon" from other windows override a fresh cursor hit-test.
-            bool ddiFresh = now - hDdi.Value.SeenAtMs <= 250;
+            var ddiFresh = now - hDdi.Value.SeenAtMs <= 250;
             if (!ddiFresh)
             {
                 if (TryUpdateLastHoverAddonFromCursorHitTest(now) && TryQueueMiddleClickSortFromLastHoverAddon(now))
@@ -580,14 +565,14 @@ public sealed unsafe partial class Plugin
             }
 
             // As a fallback, still allow using the last-good target for this addon id.
-            if (lastGoodContextTargetByAddonId.TryGetValue(ddiAddonId, out (InventoryType Type, int Slot, int A4) good2))
+            if (lastGoodContextTargetByAddonId.TryGetValue(ddiAddonId, out var good2))
             {
-                int openSlot = DragDropHelpers.PickContextMenuSlot(good2.Type, good2.Slot);
+                var openSlot = DragDropHelpers.PickContextMenuSlot(good2.Type, good2.Slot);
                 pendingMiddleClickSortRequest = (good2.Type, openSlot, ddiAddonId, now);
                 pendingMiddleClickSortUntilMs = now + 1500;
                 lastMiddleClickSortMs = now;
                 if (Configuration.DebugMode)
-                    Log.Information($"[QuickTransfer] (MMB) Used last-good target by addonId (no hover metadata): {good2.Type} slot={openSlot} addonId={ddiAddonId}");
+                    Svc.Log.Information($"[QuickTransfer] (MMB) Used last-good target by addonId (no hover metadata): {good2.Type} slot={openSlot} addonId={ddiAddonId}");
                 return;
             }
 
@@ -595,15 +580,15 @@ public sealed unsafe partial class Plugin
             pendingMiddleClickSortUntilMs = now + 1500;
             lastMiddleClickSortMs = now;
         }
-        catch(Exception ex)
+        catch (Exception ex)
         {
             // Best-effort only; avoid crashing the client if the hovered pointer becomes invalid.
-            Log.Warning(ex, "[QuickTransfer] (MMB) Failed to queue sort from hover dragdrop.");
+            Svc.Log.Warning(ex, "[QuickTransfer] (MMB) Failed to queue sort from hover dragdrop.");
         }
     }
     private void ProcessDeferredSortMenuClick(long now)
     {
-        (nint AgentPtr, nint AddonPtr, long EnqueuedAtMs)? pendingSort = pendingDeferredSortMenuClick;
+        var pendingSort = pendingDeferredSortMenuClick;
         if (pendingSort == null)
             return;
 
@@ -618,12 +603,12 @@ public sealed unsafe partial class Plugin
                 try
                 {
                     AgentInventoryContext* agent = (AgentInventoryContext*)pendingSort.Value.AgentPtr;
-                    int count = agent != null ? agent->ContextItemCount : -1;
-                    Log.Information($"[QuickTransfer] (MMB) Deferred sort timed out (ContextItemCount={count}).");
+                    var count = agent != null ? agent->ContextItemCount : -1;
+                    Svc.Log.Information($"[QuickTransfer] (MMB) Deferred sort timed out (ContextItemCount={count}).");
                 }
                 catch
                 {
-                    Log.Information("[QuickTransfer] (MMB) Deferred sort timed out.");
+                    Svc.Log.Information("[QuickTransfer] (MMB) Deferred sort timed out.");
                 }
             }
             pendingDeferredSortMenuClick = null;
@@ -641,7 +626,7 @@ public sealed unsafe partial class Plugin
             {
                 try
                 {
-                    AtkUnitBase* cm = AddonHelpers.GetAddonByName("ContextMenu");
+                    var cm = AddonHelpers.GetAddonByName("ContextMenu");
                     if (cm != null)
                     {
                         addon = cm;
@@ -663,7 +648,7 @@ public sealed unsafe partial class Plugin
             if (addon == null)
                 return;
 
-            if (ContextMenuHandler.TrySelectSortAndClose(agent, addon, out string chosenText, out int chosenIndex))
+            if (ContextMenuHandler.TrySelectSortAndClose(agent, addon, out var chosenText, out var chosenIndex))
             {
                 pendingDeferredSortMenuClick = null;
                 pendingMiddleClickSortUntilMs = 0;
@@ -671,7 +656,7 @@ public sealed unsafe partial class Plugin
                 ArmSuppressContextMenu(now, 500);
                 if (Configuration.DebugMode)
                 {
-                    Log.Information(chosenIndex >= 0 ? $"[QuickTransfer] (MMB) Selected context action '{chosenText}' (idx={chosenIndex}) via deferred OnMenuOpened." : "[QuickTransfer] (MMB) Already sorted (Undo Sort present); no action taken.");
+                    Svc.Log.Information(chosenIndex >= 0 ? $"[QuickTransfer] (MMB) Selected context action '{chosenText}' (idx={chosenIndex}) via deferred OnMenuOpened." : "[QuickTransfer] (MMB) Already sorted (Undo Sort present); no action taken.");
                 }
             }
             else
@@ -683,7 +668,7 @@ public sealed unsafe partial class Plugin
 
                 if (Configuration.DebugMode)
                 {
-                    Log.Information($"[QuickTransfer] (MMB) Context menu opened but no 'Sort' entry was found (count={agent->ContextItemCount}).");
+                    Svc.Log.Information($"[QuickTransfer] (MMB) Context menu opened but no 'Sort' entry was found (count={agent->ContextItemCount}).");
                     ContextMenuHandler.DebugDumpContextMenu(agent, 32);
                 }
 
@@ -699,12 +684,11 @@ public sealed unsafe partial class Plugin
                 }
             }
         }
-        catch(Exception ex)
+        catch (Exception ex)
         {
             pendingDeferredSortMenuClick = null;
             pendingMiddleClickSortUntilMs = 0;
-            Log.Warning(ex, "[QuickTransfer] Deferred sort select failed.");
+            Svc.Log.Warning(ex, "[QuickTransfer] Deferred sort select failed.");
         }
     }
 }
-

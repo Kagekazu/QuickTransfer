@@ -1,23 +1,17 @@
 using ECommons;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
-
 namespace QuickTransfer;
 
-internal static class CursorHoverHelpers
+internal static partial class CursorHoverHelpers
 {
-    [StructLayout(LayoutKind.Sequential)]
-    internal struct Point
-    {
-        public int X;
-        public int Y;
-    }
+    [LibraryImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool GetCursorPos(out Point lpPoint);
 
-    [DllImport("user32.dll")]
-    private static extern bool GetCursorPos(out Point lpPoint);
-
-    [DllImport("user32.dll")]
-    private static extern bool ScreenToClient(nint hWnd, ref Point lpPoint);
+    [LibraryImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool ScreenToClient(nint hWnd, ref Point lpPoint);
 
     internal static bool IsMouseButtonDown(int virtualKey)
     {
@@ -37,10 +31,10 @@ internal static class CursorHoverHelpers
         y = 0;
         try
         {
-            if (!GetCursorPos(out Point p))
+            if (!GetCursorPos(out var p))
                 return false;
 
-            nint hwnd = Process.GetCurrentProcess().MainWindowHandle;
+            var hwnd = Process.GetCurrentProcess().MainWindowHandle;
             if (hwnd == nint.Zero)
                 return false;
 
@@ -58,5 +52,12 @@ internal static class CursorHoverHelpers
         {
             return false;
         }
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct Point
+    {
+        public int X;
+        public int Y;
     }
 }
