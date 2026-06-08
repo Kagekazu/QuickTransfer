@@ -42,12 +42,12 @@ jobs:
         run: dotnet restore
 
       - name: Build (Release)
-        run: dotnet build -c Release --no-restore
+        run: dotnet build QuickTransfer.slnx -c Release --no-restore
 
       - name: Prepare release zip
         shell: pwsh
         run: |
-          $zip = "bin\\Release\\QuickTransfer\\latest.zip"
+          $zip = "bin\\x64\\Release\\QuickTransfer\\latest.zip"
           if (!(Test-Path $zip)) { throw "Expected pack zip not found: $zip" }
           Copy-Item $zip "QuickTransfer.zip" -Force
 
