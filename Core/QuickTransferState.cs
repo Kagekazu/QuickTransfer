@@ -1,7 +1,6 @@
 #pragma warning disable CS0649 // State bags are populated field-by-field at runtime.
 
 using FFXIVClientStructs.FFXIV.Client.Game;
-
 namespace QuickTransfer;
 
 internal enum PendingNumericKind
@@ -62,11 +61,10 @@ internal readonly struct ChestSortKey(uint category, uint itemId, bool isHq) : I
 
     public int CompareTo(ChestSortKey other)
     {
-        int c = category.CompareTo(other.category);
+        var c = category.CompareTo(other.category);
         if (c != 0) return c;
         c = itemId.CompareTo(other.itemId);
-        if (c != 0) return c;
-        return hq.CompareTo(other.hq);
+        return c != 0 ? c : hq.CompareTo(other.hq);
     }
 }
 

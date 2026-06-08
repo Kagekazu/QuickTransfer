@@ -1,5 +1,4 @@
 using FFXIVClientStructs.FFXIV.Client.Game;
-
 namespace QuickTransfer;
 
 internal static class QuickTransferConstants

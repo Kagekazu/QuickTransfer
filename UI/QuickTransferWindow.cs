@@ -1,7 +1,6 @@
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface.Windowing;
 using System.Numerics;
-
 namespace QuickTransfer;
 
 public class QuickTransferWindow : Window, IDisposable
@@ -64,7 +63,7 @@ public class QuickTransferWindow : Window, IDisposable
 
         ImGui.Spacing();
 
-        bool enabled = config.Enabled;
+        var enabled = config.Enabled;
         if (ImGui.Checkbox("Plugin enabled", ref enabled))
         {
             config.Enabled = enabled;
@@ -82,7 +81,7 @@ public class QuickTransferWindow : Window, IDisposable
         {
             Indent(() =>
             {
-                bool mmbSort = config.EnableMiddleClickSort;
+                var mmbSort = config.EnableMiddleClickSort;
                 if (ImGui.Checkbox("Sort inventories on middle-click", ref mmbSort))
                 {
                     config.EnableMiddleClickSort = mmbSort;
@@ -97,7 +96,7 @@ public class QuickTransferWindow : Window, IDisposable
         {
             Indent(() =>
             {
-                bool enableFc = config.EnableCompanyChest;
+                var enableFc = config.EnableCompanyChest;
                 if (ImGui.Checkbox("Enable FC chest helpers", ref enableFc))
                 {
                     config.EnableCompanyChest = enableFc;
@@ -109,7 +108,7 @@ public class QuickTransferWindow : Window, IDisposable
                 ImGui.Spacing();
                 ImGui.BeginDisabled(!config.EnableCompanyChest);
 
-                bool mmbOrganize = config.EnableCompanyChestMiddleClickOrganize;
+                var mmbOrganize = config.EnableCompanyChestMiddleClickOrganize;
                 if (ImGui.Checkbox("Middle-click organize (stack + compact)", ref mmbOrganize))
                 {
                     config.EnableCompanyChestMiddleClickOrganize = mmbOrganize;
@@ -118,7 +117,7 @@ public class QuickTransferWindow : Window, IDisposable
 
                 Hint("FC chest has no Sort menu — middle-click runs an organize pass on the active tab.");
 
-                bool autoConfirmQty = config.AutoConfirmCompanyChestQuantity;
+                var autoConfirmQty = config.AutoConfirmCompanyChestQuantity;
                 if (ImGui.Checkbox("Auto-confirm quantity dialogs", ref autoConfirmQty))
                 {
                     config.AutoConfirmCompanyChestQuantity = autoConfirmQty;
@@ -129,7 +128,7 @@ public class QuickTransferWindow : Window, IDisposable
 
                 ImGui.Text("Unlocked item tabs");
                 ImGui.SetNextItemWidth(220);
-                int compartments = config.CompanyChestCompartments;
+                var compartments = config.CompanyChestCompartments;
                 if (ImGui.SliderInt("##CompanyChestCompartments", ref compartments, 3, 5))
                 {
                     config.CompanyChestCompartments = compartments;
@@ -149,7 +148,7 @@ public class QuickTransferWindow : Window, IDisposable
         {
             Indent(() =>
             {
-                bool enableVendor = config.EnableVendorQuickSell;
+                var enableVendor = config.EnableVendorQuickSell;
                 if (ImGui.Checkbox("Enable vendor quick sell", ref enableVendor))
                 {
                     config.EnableVendorQuickSell = enableVendor;
@@ -160,7 +159,7 @@ public class QuickTransferWindow : Window, IDisposable
 
                 ImGui.BeginDisabled(!config.EnableVendorQuickSell);
 
-                bool autoConfirmSell = config.AutoConfirmVendorSell;
+                var autoConfirmSell = config.AutoConfirmVendorSell;
                 if (ImGui.Checkbox("Auto-confirm sell dialogs", ref autoConfirmSell))
                 {
                     config.AutoConfirmVendorSell = autoConfirmSell;
@@ -179,7 +178,7 @@ public class QuickTransferWindow : Window, IDisposable
             {
                 ImGui.Text("Transfer cooldown");
                 ImGui.SetNextItemWidth(220);
-                int cooldown = config.TransferCooldownMs;
+                var cooldown = config.TransferCooldownMs;
                 if (ImGui.SliderInt("##TransferCooldownMs", ref cooldown, 0, 1000, "%d ms"))
                 {
                     config.TransferCooldownMs = cooldown;
@@ -190,7 +189,7 @@ public class QuickTransferWindow : Window, IDisposable
 
                 ImGui.Spacing();
 
-                bool debugMode = config.DebugMode;
+                var debugMode = config.DebugMode;
                 if (ImGui.Checkbox("Debug mode", ref debugMode))
                 {
                     config.DebugMode = debugMode;
