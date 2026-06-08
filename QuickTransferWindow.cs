@@ -89,6 +89,18 @@ public class QuickTransferWindow : Window, IDisposable
         ImGui.SameLine();
         ImGui.TextColored(new Vector4(0.85f, 0.75f, 0.45f, 0.9f), "(Best effort; disable if it misbehaves)");
 
+        ImGui.Text("Company Chest item compartments (3–5):");
+        ImGui.SameLine();
+        ImGui.SetNextItemWidth(100);
+        int compartments = config.CompanyChestCompartments;
+        if (ImGui.InputInt("###CompanyChestCompartments", ref compartments))
+        {
+            config.CompanyChestCompartments = Math.Max(3, Math.Min(5, compartments));
+            config.Save();
+        }
+        ImGui.SameLine();
+        ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 0.7f), "(Match your FC chest unlocked tabs; default 3)");
+
         // Vendor Quick Sell
         bool enableVendorQuickSell = config.EnableVendorQuickSell;
         if (ImGui.Checkbox("Enable Vendor Quick Sell###EnableVendorQuickSell", ref enableVendorQuickSell))

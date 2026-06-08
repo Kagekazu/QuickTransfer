@@ -1562,9 +1562,9 @@ public sealed unsafe class Plugin : IDalamudPlugin
             if (TryGetVisibleAddon(InputNumericAddonName, out AtkUnitBase* _))
                 return;
 
-            // Deposit: Inventory -> Company Chest (UI-driven move).
+            // Deposit: Inventory/Armoury -> Company Chest (UI-driven move).
             // This is handled as a small state machine so stacks can top-off existing stacks and spill into new stacks.
-            if (IsPlayerInventoryType(inventoryType) && StartCompanyChestDeposit(inventoryType, (uint)slot))
+            if (IsCompanyChestDepositSourceType(inventoryType) && StartCompanyChestDeposit(inventoryType, (uint)slot))
             {
                 lastActionTickMs = now;
                 TryCloseCurrentContextMenu(agent);
@@ -2763,7 +2763,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
                 return false;
             if (!IsCompanyChestOpen())
                 return false;
-            if (!IsPlayerInventoryType(sourceType))
+            if (!IsCompanyChestDepositSourceType(sourceType))
                 return false;
 
             if (!TryGetItemInfo(sourceType, (int)sourceSlot, out uint itemId, out bool isHq, out uint qty))
@@ -4236,6 +4236,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
 
     // Use InventoryHelpers for these functions
     private static bool IsPlayerInventoryType(InventoryType inventoryType) => InventoryHelpers.IsPlayerInventoryType(inventoryType);
+    private static bool IsCompanyChestDepositSourceType(InventoryType inventoryType) => InventoryHelpers.IsCompanyChestDepositSourceType(inventoryType);
     private static bool IsArmouryType(InventoryType inventoryType) => InventoryHelpers.IsArmouryType(inventoryType);
     private static bool IsSaddlebagOpen() => InventoryHelpers.IsSaddlebagOpen();
     private static bool IsSaddlebagType(InventoryType inventoryType) => InventoryHelpers.IsSaddlebagType(inventoryType);

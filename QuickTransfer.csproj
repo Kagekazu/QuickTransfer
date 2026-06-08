@@ -8,9 +8,9 @@
         <RootNamespace>QuickTransfer</RootNamespace>
         <OutputType>Library</OutputType>
         <IsPackable>false</IsPackable>
-        <Version>1.0.6</Version>
-        <AssemblyVersion>1.0.6.0</AssemblyVersion>
-        <FileVersion>1.0.6.0</FileVersion>
+        <Version>1.0.7</Version>
+        <AssemblyVersion>1.0.7.0</AssemblyVersion>
+        <FileVersion>1.0.7.0</FileVersion>
     </PropertyGroup>
 
     <!-- Local builds: some setups have DALAMUD_HOME pointing at the XIVLauncher root,
@@ -24,5 +24,6 @@
     </PropertyGroup>
     <ItemGroup>
         <PackageReference Update="DalamudPackager" Version="15.0.0"/>
+        <PackageReference Include="ECommons" Version="3.2.1.9" />
     </ItemGroup>
 </Project>

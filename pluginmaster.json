@@ -3,10 +3,10 @@
     "Author": "flick",
     "Name": "QuickTransfer",
     "InternalName": "QuickTransfer",
-    "AssemblyVersion": "1.0.6.0",
+    "AssemblyVersion": "1.0.7.0",
     "Description": "Automate inventory transfers with Shift/Ctrl/Alt + Right-Click. Trade window, vendor quick sell, FC chest.",
     "ApplicableVersion": "any",
-    "RepoUrl": "https://github.com/Knack117/QuickTransfer",
+    "RepoUrl": "https://github.com/Kagekazu/QuickTransfer",
     "DalamudApiLevel": 15,
     "Punchline": "Quick item transfer + split helpers.",
     "Tags": [
@@ -15,7 +15,7 @@
       "quality of life"
     ],
     "AcceptsFeedback": true,
-    "DownloadLinkInstall": "https://github.com/Knack117/QuickTransfer/releases/latest/download/QuickTransfer.zip",
-    "DownloadLinkUpdate": "https://github.com/Knack117/QuickTransfer/releases/latest/download/QuickTransfer.zip"
+    "DownloadLinkInstall": "https://github.com/Kagekazu/QuickTransfer/releases/latest/download/QuickTransfer.zip",
+    "DownloadLinkUpdate": "https://github.com/Kagekazu/QuickTransfer/releases/latest/download/QuickTransfer.zip"
   }
 ]
