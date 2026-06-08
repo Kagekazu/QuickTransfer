@@ -103,9 +103,9 @@ public sealed unsafe partial class Plugin : IDalamudPlugin
     private long suppressContextMenuUntilMs;
     private long suppressInputNumericUntilMs;
 
-    public Plugin()
+    public Plugin(IDalamudPluginInterface pluginInterface)
     {
-        ECommonsMain.Init(Svc.PluginInterface, this);
+        ECommonsMain.Init(pluginInterface, this);
 
         Configuration = Svc.PluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
 
