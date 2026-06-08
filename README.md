@@ -78,7 +78,7 @@ The plugin only clicks **existing** context menu options when they are available
 - **Vendor Shop**
   - With a vendor shop open, Shift + Right Click → **Sell**. Enable **Auto-confirm vendor sell** to auto-fill quantity and click OK on "Are you certain?" dialogs.
 - **Company Chest (Free Company Chest)**
-  - Shift + Right Click Inventory/Armoury → deposit; Shift + Right Click Company Chest → **Remove** (withdraw)
+  - Shift + Right Click Inventory/Armoury → deposit into the **currently selected tab**; Shift + Right Click Company Chest → **Remove** (withdraw)
 
 If an option is not present for the clicked item, **nothing happens**.
 
@@ -149,6 +149,7 @@ QuickTransfer/
 ├── QuickTransfer.cs          # Main plugin class
 ├── QuickTransfer.csproj      # Project file
 ├── QuickTransferWindow.cs    # Configuration UI
+├── AddonHelpers.cs           # ClientStructs addon lookup
 ├── ContextMenuHandler.cs     # Context menu matching and selection
 ├── InventoryHelpers.cs       # Inventory/addon detection
 ├── DragDropHelpers.cs        # Drag-drop parsing
@@ -219,8 +220,21 @@ This plugin is licensed under the MIT License - see the `LICENSE` file for detai
 
 ## Changelog
 
+### Version 1.0.9
+- **Refactor**: Phase 2 cleanup — `OpenForItemSlot` hook migrated to ECommons `EzHook` (auto-dispose on unload)
+- **Refactor**: Shared constants (`QuickTransferConstants`) and FC chest state types extracted to dedicated files
+- **Cleanup**: Removed ~40 thin wrapper methods; call sites use `InventoryHelpers`, `ContextMenuHandler`, `AtkValueHelpers`, and `DragDropHelpers` directly
+- **Cleanup**: Unified `ModifierMode` / `AutoContextAction` on `ContextMenuHandler` (removed duplicate Plugin enums)
+
+### Version 1.0.8
+- **Refactor**: ECommons initialized; addon lookup via ClientStructs (`AddonHelpers`) instead of `IGameGui`
+- **Refactor**: Item stack/category lookups use ECommons `GenericHelpers.TryGetRow`
+- **Refactor**: Middle-click detection uses ECommons `GenericHelpers.IsKeyPressed`; vendor Yes/No uses `AddonMaster.SelectYesno`
+- **Cleanup**: Deduplicated AtkValue/inventory helpers; fixed obsolete `AtkValueType.String8` warnings
+
 ### Version 1.0.7
 - **Fix**: Armoury → Free Company Chest deposit now works with Shift + Right Click (previously inventory-only)
+- **Fix**: FC chest Shift+RClick deposits now target the **active tab** instead of the first open slot in Tab 1
 - **Fix**: Release CI updated from Dalamud API 14 to API 15 to match the project SDK
 - **New**: Company Chest compartments setting exposed in the config UI (3–5 tabs)
 - README updated: retainer flows, modifier priority, and configuration table

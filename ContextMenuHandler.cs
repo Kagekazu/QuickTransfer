@@ -94,6 +94,76 @@ internal static unsafe class ContextMenuHandler
         };
     }
 
+    public static bool TryAutoSelectFromAgent(
+        AgentInventoryContext* agent,
+        ModifierMode mode,
+        Configuration configuration,
+        out string chosenText,
+        out int chosenIndex,
+        ref long pendingCloseContextMenuAtMs)
+    {
+        chosenText = string.Empty;
+        chosenIndex = -1;
+
+        AtkUnitBase* addon = null;
+        try
+        {
+            uint agentAddonId = agent->AgentInterface.GetAddonId();
+            if (agentAddonId != 0)
+                addon = AddonHelpers.GetAddonById(agentAddonId);
+        }
+        catch
+        {
+            /* ignore */
+        }
+
+        if (addon == null)
+            addon = AddonHelpers.GetAddonByName(QuickTransferConstants.ContextMenuAddonName);
+        if (addon == null)
+            return false;
+
+        return TryAutoSelectAndClose(
+            agent,
+            addon,
+            mode,
+            configuration,
+            out chosenText,
+            out chosenIndex,
+            ref pendingCloseContextMenuAtMs);
+    }
+
+    public static void TryCloseCurrentContextMenu(AgentInventoryContext* agent)
+    {
+        try
+        {
+            uint agentAddonId = agent->AgentInterface.GetAddonId();
+            if (agentAddonId != 0)
+            {
+                AtkUnitBase* addon = AddonHelpers.GetAddonById(agentAddonId);
+                if (addon != null)
+                {
+                    CloseContextMenuAddon(agent, addon);
+                    return;
+                }
+            }
+        }
+        catch
+        {
+            /* ignore */
+        }
+
+        try
+        {
+            AtkUnitBase* cm = AddonHelpers.GetAddonByName(QuickTransferConstants.ContextMenuAddonName);
+            if (cm != null)
+                CloseContextMenuAddon(agent, cm);
+        }
+        catch
+        {
+            /* ignore */
+        }
+    }
+
     public static void CloseContextMenuAddon(AgentInventoryContext* agent, AtkUnitBase* contextMenuAddon)
     {
         try { agent->AgentInterface.Hide(); }
