@@ -423,4 +423,67 @@ internal static unsafe class ContextMenuHandler
 
         return false;
     }
+
+    public static bool ContainsString(AtkUnitBase* ctxAddon, string needle, bool debugMode)
+    {
+        try
+        {
+            if (ctxAddon == null || ctxAddon->AtkValues == null || ctxAddon->AtkValuesCount <= 0)
+                return false;
+
+            int count = Math.Min((int)ctxAddon->AtkValuesCount, 128);
+            if (debugMode)
+                Plugin.Log.Information($"[QuickTransfer] ContextMenu AtkValuesCount={ctxAddon->AtkValuesCount} (scanning {count}).");
+            for(int i = 0; i < count; i++)
+            {
+                AtkValue v = ctxAddon->AtkValues[i];
+                if (v.Type is not (AtkValueType.String or AtkValueType.ManagedString or AtkValueType.ConstString))
+                    continue;
+
+                string s = AtkValueHelpers.ReadAtkValueString(v);
+                if (string.IsNullOrWhiteSpace(s))
+                    continue;
+
+                if (debugMode)
+                    Plugin.Log.Information($"[QuickTransfer] ContextMenu AtkValue[{i}] = '{s}'");
+
+                if (s.Contains(needle, StringComparison.OrdinalIgnoreCase))
+                {
+                    if (debugMode)
+                        Plugin.Log.Information($"[QuickTransfer] ContextMenu contains '{needle}' (found '{s}' at AtkValue[{i}]).");
+                    return true;
+                }
+            }
+        }
+        catch
+        {
+            // ignore
+        }
+
+        return false;
+    }
+
+    public static void DebugDumpContextMenu(AgentInventoryContext* agent, int maxItems)
+    {
+        try
+        {
+            int max = Math.Min(Math.Min(agent->ContextItemCount, 64), maxItems);
+            for(int i = 0; i < max; i++)
+            {
+                AtkValue param = agent->EventParams[agent->ContexItemStartIndex + i];
+                if (param.Type is not (AtkValueType.String or AtkValueType.ManagedString))
+                    continue;
+
+                string text = AtkValueHelpers.ReadAtkValueString(param);
+                if (string.IsNullOrWhiteSpace(text))
+                    continue;
+
+                Plugin.Log.Information($"[QuickTransfer] Menu idx={i}: '{text}'");
+            }
+        }
+        catch(Exception ex)
+        {
+            Plugin.Log.Warning(ex, "[QuickTransfer] Failed to dump context menu.");
+        }
+    }
 }

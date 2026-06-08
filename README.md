@@ -146,16 +146,28 @@ Release build produces `bin/Release/QuickTransfer/latest.zip` for distribution.
 
 ```
 QuickTransfer/
-├── QuickTransfer.cs          # Main plugin class
-├── QuickTransfer.csproj      # Project file
-├── QuickTransferWindow.cs    # Configuration UI
-├── AddonHelpers.cs           # ClientStructs addon lookup
-├── ContextMenuHandler.cs     # Context menu matching and selection
-├── InventoryHelpers.cs       # Inventory/addon detection
-├── DragDropHelpers.cs        # Drag-drop parsing
-├── AtkValueHelpers.cs        # AtkValue and addon utilities
-├── pluginmaster.json         # Plugin manifest (reference; live repo is on puni.sh)
-└── README.md                 # This file
+├── Plugin/
+│   └── QuickTransfer.cs              # Entry point: hook, lifecycle, framework orchestration
+├── Handlers/
+│   ├── MiddleClickSortHandler.cs     # MMB sort queue, hover/cursor targeting
+│   ├── CompanyChestHandler.cs        # FC chest deposit, organize, tab resolution
+│   └── InputNumericHandler.cs        # Quantity dialogs (store/remove/split/trade/sell)
+├── Helpers/
+│   ├── AddonHelpers.cs               # ClientStructs addon lookup
+│   ├── AtkValueHelpers.cs            # AtkValue read/write utilities
+│   ├── ContextMenuHandler.cs         # Context menu matching and selection
+│   ├── CursorHoverHelpers.cs         # Win32 cursor position + mouse state
+│   ├── DragDropHelpers.cs            # Drag-drop parsing and payload resolution
+│   └── InventoryHelpers.cs           # Inventory/addon detection
+├── Core/
+│   ├── Configuration.cs              # Plugin settings (IPluginConfiguration)
+│   ├── QuickTransferConstants.cs     # Addon names, inventory type lists
+│   └── QuickTransferState.cs         # FC chest state structs and enums
+├── UI/
+│   └── QuickTransferWindow.cs        # Configuration window
+├── QuickTransfer.csproj
+├── pluginmaster.json                 # Manifest reference (live repo is on puni.sh)
+└── README.md
 ```
 
 ### Adding New Features
@@ -219,6 +231,11 @@ This plugin is licensed under the MIT License - see the `LICENSE` file for detai
 - **Contributors**: Thanks to everyone who has contributed to this project
 
 ## Changelog
+
+### Version 1.1.0
+- **Refactor**: Phase 3 — split monolithic plugin into `Handlers/` (MMB sort, FC chest, InputNumeric) via partial class
+- **Refactor**: Folder layout — `Core/`, `Helpers/`, `Plugin/`, `UI/`
+- **Refactor**: `CursorHoverHelpers`, `DragDropHelpers.TryResolveTargetFromWeirdPayload`, context menu debug helpers extracted
 
 ### Version 1.0.9
 - **Refactor**: Phase 2 cleanup — `OpenForItemSlot` hook migrated to ECommons `EzHook` (auto-dispose on unload)

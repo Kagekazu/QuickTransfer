@@ -298,4 +298,107 @@ internal static unsafe class DragDropHelpers
 
         return preferredSlot;
     }
+
+    public static bool TryResolveTargetFromWeirdPayload(
+        ReadOnlySpan<InventoryType> containers,
+        int rawInt1,
+        int rawInt2,
+        short refIdx,
+        out InventoryType type,
+        out int slot)
+    {
+        type = default;
+        slot = -1;
+
+        try
+        {
+            if (containers.Length == 0)
+                return false;
+
+            InventoryManager* inv = InventoryManager.Instance();
+            if (inv == null)
+                return false;
+
+            List<int> candidates = new(capacity: 4) { rawInt2, rawInt1, refIdx };
+            foreach(int s in candidates.Distinct())
+            {
+                if (s < 0 || s > 500)
+                    continue;
+
+                foreach(InventoryType t in containers)
+                {
+                    InventoryItem* it = inv->GetInventorySlot(t, s);
+                    if (it != null && it->ItemId != 0)
+                    {
+                        type = t;
+                        slot = s;
+                        return true;
+                    }
+                }
+            }
+
+            foreach(InventoryType t in containers)
+            {
+                InventoryContainer* c = inv->GetInventoryContainer(t);
+                if (c == null || !c->IsLoaded || c->Size <= 0)
+                    continue;
+
+                for(int i = 0; i < c->Size; i++)
+                {
+                    InventoryItem* it = c->GetInventorySlot(i);
+                    if (it != null && it->ItemId != 0)
+                    {
+                        type = t;
+                        slot = i;
+                        return true;
+                    }
+                }
+            }
+        }
+        catch
+        {
+            // ignore
+        }
+
+        return false;
+    }
+
+    public static AtkDragDropInterface* TryGetDdiFromListIndex(AtkComponentList* list, int idx)
+    {
+        if (list == null)
+            return null;
+        if (idx < 0 || idx > 512)
+            return null;
+        try
+        {
+            AtkComponentListItemRenderer* r = list->GetItemRenderer(idx);
+            return r != null ? &r->AtkDragDropInterface : null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    public static AtkDragDropInterface* TryGetDdiFromComponent(AtkComponentBase* component, int preferredListIndex = 0)
+    {
+        if (component == null)
+            return null;
+
+        try
+        {
+            ComponentType t = component->GetComponentType();
+            return t switch
+            {
+                ComponentType.DragDrop => &((AtkComponentDragDrop*)component)->AtkDragDropInterface,
+                ComponentType.ListItemRenderer => &((AtkComponentListItemRenderer*)component)->AtkDragDropInterface,
+                ComponentType.List => TryGetDdiFromListIndex((AtkComponentList*)component, preferredListIndex),
+                var _ => null
+            };
+        }
+        catch
+        {
+            return null;
+        }
+    }
 }
