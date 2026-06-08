@@ -11,14 +11,12 @@
   <!-- FC chest body -->
   <rect x="352" y="144" width="144" height="224" rx="14" fill="#F0E6CC"/>
 
-  <!-- Iron bands (lid seam + base) -->
+  <!-- Iron bands -->
   <rect x="352" y="200" width="144" height="10" fill="#14532D"/>
   <rect x="352" y="328" width="144" height="10" fill="#14532D"/>
 
-  <!-- Round lock plate -->
+  <!-- Lock plate + keyhole -->
   <circle cx="424" cy="270" r="24" fill="#14532D"/>
-
-  <!-- Keyhole -->
   <circle cx="424" cy="262" r="5" fill="#F0E6CC"/>
   <rect x="421" y="262" width="6" height="18" fill="#F0E6CC"/>
 
