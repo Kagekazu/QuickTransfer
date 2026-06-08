@@ -63,8 +63,6 @@ internal static unsafe class AtkValueHelpers
         s->BufUsed = value.Length + 1;
     }
 
-    public static AtkUnitBase* GetAddonById(uint id) => AddonHelpers.GetAddonById(id);
-
     public static AtkValue* CreateAtkValueArray(params object[] values)
     {
         AtkValue* atkValues = (AtkValue*)Marshal.AllocHGlobal(values.Length * sizeof(AtkValue));
