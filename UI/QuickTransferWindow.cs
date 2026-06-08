@@ -1,19 +1,26 @@
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface.Windowing;
 using System.Numerics;
+
 namespace QuickTransfer;
 
 public class QuickTransferWindow : Window, IDisposable
 {
+    private static readonly Vector4 HeaderColor = new(0.45f, 0.78f, 1f, 1f);
+    private static readonly Vector4 MutedColor = new(0.65f, 0.65f, 0.65f, 1f);
+    private static readonly Vector4 WarningColor = new(0.95f, 0.75f, 0.35f, 1f);
+    private static readonly Vector4 ActiveColor = new(0.45f, 0.9f, 0.55f, 1f);
+    private static readonly Vector4 DisabledColor = new(0.55f, 0.55f, 0.55f, 1f);
+
     private readonly Configuration config;
 
     public QuickTransferWindow(Configuration config)
-        : base("QuickTransfer Settings###QuickTransferConfig")
+        : base("QuickTransfer###QuickTransferConfig")
     {
         this.config = config;
 
         SizeCondition = ImGuiCond.FirstUseEver;
-        Size = new Vector2(500, 400);
+        Size = new Vector2(520, 560);
     }
 
     public void Dispose()
@@ -23,148 +30,255 @@ public class QuickTransferWindow : Window, IDisposable
 
     public override void Draw()
     {
-        // Main settings
-        ImGui.TextColored(new Vector4(0.4f, 0.8f, 1f, 1f), "QuickTransfer Configuration");
-        ImGui.Separator();
+        DrawHeader();
+        ImGui.Spacing();
 
-        // Enable/Disable
+        if (ImGui.BeginTabBar("QuickTransferTabs"))
+        {
+            if (ImGui.BeginTabItem("Settings"))
+            {
+                DrawSettingsTab();
+                ImGui.EndTabItem();
+            }
+
+            if (ImGui.BeginTabItem("Controls"))
+            {
+                DrawControlsTab();
+                ImGui.EndTabItem();
+            }
+
+            ImGui.EndTabBar();
+        }
+
+        ImGui.Spacing();
+        ImGui.Separator();
+        if (ImGui.Button("Close"))
+            IsOpen = false;
+    }
+
+    private void DrawHeader()
+    {
+        ImGui.TextColored(HeaderColor, "QuickTransfer");
+        ImGui.SameLine();
+        ImGui.TextColored(config.Enabled ? ActiveColor : DisabledColor, config.Enabled ? "Active" : "Disabled");
+
+        ImGui.Spacing();
+
         bool enabled = config.Enabled;
-        if (ImGui.Checkbox("Enabled###Enabled", ref enabled))
+        if (ImGui.Checkbox("Plugin enabled", ref enabled))
         {
             config.Enabled = enabled;
             config.Save();
         }
-        ImGui.SameLine();
-        ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 1f), config.Enabled ? "(Active)" : "(Disabled)");
 
+        Hint("Master switch. When off, all shortcuts are ignored.");
+    }
+
+    private void DrawSettingsTab()
+    {
         ImGui.Spacing();
 
-        // Debug mode
-        bool debugMode = config.DebugMode;
-        if (ImGui.Checkbox("Debug Mode###DebugMode", ref debugMode))
+        if (ImGui.CollapsingHeader("Middle-click", ImGuiTreeNodeFlags.DefaultOpen))
         {
-            config.DebugMode = debugMode;
-            config.Save();
-        }
-        ImGui.SameLine();
-        ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 0.7f), "(Logs to chat - for troubleshooting)");
+            Indent(() =>
+            {
+                bool mmbSort = config.EnableMiddleClickSort;
+                if (ImGui.Checkbox("Sort inventories on middle-click", ref mmbSort))
+                {
+                    config.EnableMiddleClickSort = mmbSort;
+                    config.Save();
+                }
 
+                Hint("Middle-click an item to auto-select Sort when the container supports it.");
+            });
+        }
+
+        if (ImGui.CollapsingHeader("Free Company Chest", ImGuiTreeNodeFlags.DefaultOpen))
+        {
+            Indent(() =>
+            {
+                bool enableFc = config.EnableCompanyChest;
+                if (ImGui.Checkbox("Enable FC chest helpers", ref enableFc))
+                {
+                    config.EnableCompanyChest = enableFc;
+                    config.Save();
+                }
+
+                Hint("Shift+right-click deposits from inventory/armoury; Shift+right-click the chest withdraws.");
+
+                ImGui.Spacing();
+                ImGui.BeginDisabled(!config.EnableCompanyChest);
+
+                bool mmbOrganize = config.EnableCompanyChestMiddleClickOrganize;
+                if (ImGui.Checkbox("Middle-click organize (stack + compact)", ref mmbOrganize))
+                {
+                    config.EnableCompanyChestMiddleClickOrganize = mmbOrganize;
+                    config.Save();
+                }
+
+                Hint("FC chest has no Sort menu — middle-click runs an organize pass on the active tab.");
+
+                bool autoConfirmQty = config.AutoConfirmCompanyChestQuantity;
+                if (ImGui.Checkbox("Auto-confirm quantity dialogs", ref autoConfirmQty))
+                {
+                    config.AutoConfirmCompanyChestQuantity = autoConfirmQty;
+                    config.Save();
+                }
+
+                Hint("Auto-fills and confirms store, remove, and split quantity prompts.");
+
+                ImGui.Text("Unlocked item tabs");
+                ImGui.SetNextItemWidth(220);
+                int compartments = config.CompanyChestCompartments;
+                if (ImGui.SliderInt("##CompanyChestCompartments", ref compartments, 3, 5))
+                {
+                    config.CompanyChestCompartments = compartments;
+                    config.Save();
+                }
+
+                ImGui.SameLine();
+                ImGui.TextColored(MutedColor, $"{compartments} tab(s)");
+
+                Hint("Match how many item compartments your FC has unlocked (usually 3, up to 5).");
+
+                ImGui.EndDisabled();
+            });
+        }
+
+        if (ImGui.CollapsingHeader("Vendor quick sell", ImGuiTreeNodeFlags.DefaultOpen))
+        {
+            Indent(() =>
+            {
+                bool enableVendor = config.EnableVendorQuickSell;
+                if (ImGui.Checkbox("Enable vendor quick sell", ref enableVendor))
+                {
+                    config.EnableVendorQuickSell = enableVendor;
+                    config.Save();
+                }
+
+                Hint("With a vendor shop open, Shift+right-click selects Sell.");
+
+                ImGui.BeginDisabled(!config.EnableVendorQuickSell);
+
+                bool autoConfirmSell = config.AutoConfirmVendorSell;
+                if (ImGui.Checkbox("Auto-confirm sell dialogs", ref autoConfirmSell))
+                {
+                    config.AutoConfirmVendorSell = autoConfirmSell;
+                    config.Save();
+                }
+
+                Hint("Auto-fills quantity and confirms \"How many?\" and \"Are you certain?\" prompts.");
+
+                ImGui.EndDisabled();
+            });
+        }
+
+        if (ImGui.CollapsingHeader("Advanced"))
+        {
+            Indent(() =>
+            {
+                ImGui.Text("Transfer cooldown");
+                ImGui.SetNextItemWidth(220);
+                int cooldown = config.TransferCooldownMs;
+                if (ImGui.SliderInt("##TransferCooldownMs", ref cooldown, 0, 1000, "%d ms"))
+                {
+                    config.TransferCooldownMs = cooldown;
+                    config.Save();
+                }
+
+                Hint("Minimum time between right-click actions. Increase if actions feel too fast or get skipped.");
+
+                ImGui.Spacing();
+
+                bool debugMode = config.DebugMode;
+                if (ImGui.Checkbox("Debug mode", ref debugMode))
+                {
+                    config.DebugMode = debugMode;
+                    config.Save();
+                }
+
+                ImGui.TextColored(WarningColor, "Logs detailed actions to chat. For troubleshooting only.");
+            });
+        }
+    }
+
+    private void DrawControlsTab()
+    {
+        ImGui.Spacing();
+        ImGui.TextWrapped(
+            "QuickTransfer picks existing context menu entries — it does not move items on its own. " +
+            "If the menu option is not available for that item, nothing happens.");
         ImGui.Spacing();
 
-        // Middle-click sort
-        bool mmbSort = config.EnableMiddleClickSort;
-        if (ImGui.Checkbox("Enable Middle-Click Sort###EnableMiddleClickSort", ref mmbSort))
-        {
-            config.EnableMiddleClickSort = mmbSort;
-            config.Save();
-        }
-        ImGui.SameLine();
-        ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 0.7f), "(MMB on an item: auto-select \"Sort\" when available)");
-
-        // Company Chest
-        bool enableCompanyChest = config.EnableCompanyChest;
-        if (ImGui.Checkbox("Enable Company Chest (Free Company Chest)###EnableCompanyChest", ref enableCompanyChest))
-        {
-            config.EnableCompanyChest = enableCompanyChest;
-            config.Save();
-        }
-        ImGui.SameLine();
-        ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 0.7f), "(Shift/Alt: deposit/withdraw while FC chest is open)");
-
-        bool mmbCompanyOrganize = config.EnableCompanyChestMiddleClickOrganize;
-        if (ImGui.Checkbox("Company Chest: Middle-Click Organize###EnableCompanyChestMiddleClickOrganize", ref mmbCompanyOrganize))
-        {
-            config.EnableCompanyChestMiddleClickOrganize = mmbCompanyOrganize;
-            config.Save();
-        }
-        ImGui.SameLine();
-        ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 0.7f), "(MMB: auto-stack + compact in FC chest)");
-
-        bool autoConfirmQty = config.AutoConfirmCompanyChestQuantity;
-        if (ImGui.Checkbox("Auto-confirm quantity prompts (Company Chest / Split)###AutoConfirmCompanyChestQty", ref autoConfirmQty))
-        {
-            config.AutoConfirmCompanyChestQuantity = autoConfirmQty;
-            config.Save();
-        }
-        ImGui.SameLine();
-        ImGui.TextColored(new Vector4(0.85f, 0.75f, 0.45f, 0.9f), "(Best effort; disable if it misbehaves)");
-
-        ImGui.Text("Company Chest item compartments (3–5):");
-        ImGui.SameLine();
-        ImGui.SetNextItemWidth(100);
-        int compartments = config.CompanyChestCompartments;
-        if (ImGui.InputInt("###CompanyChestCompartments", ref compartments))
-        {
-            config.CompanyChestCompartments = Math.Max(3, Math.Min(5, compartments));
-            config.Save();
-        }
-        ImGui.SameLine();
-        ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 0.7f), "(Match your FC chest unlocked tabs; default 3)");
-
-        // Vendor Quick Sell
-        bool enableVendorQuickSell = config.EnableVendorQuickSell;
-        if (ImGui.Checkbox("Enable Vendor Quick Sell###EnableVendorQuickSell", ref enableVendorQuickSell))
-        {
-            config.EnableVendorQuickSell = enableVendorQuickSell;
-            config.Save();
-        }
-        ImGui.SameLine();
-        ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 0.7f), "(Shift+RClick: auto-select \"Sell\" when vendor is open)");
-
-        bool autoConfirmVendorSell = config.AutoConfirmVendorSell;
-        if (ImGui.Checkbox("Auto-confirm vendor sell dialogs###AutoConfirmVendorSell", ref autoConfirmVendorSell))
-        {
-            config.AutoConfirmVendorSell = autoConfirmVendorSell;
-            config.Save();
-        }
-        ImGui.SameLine();
-        ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 0.7f), "(Auto-fill quantity, confirm \"How many?\", and click OK on \"Are you certain?\")");
-
-        // Transfer cooldown
+        DrawModifierTable();
         ImGui.Spacing();
-        ImGui.Text("Transfer Cooldown (ms):");
-        ImGui.SameLine();
-        ImGui.SetNextItemWidth(100);
-        int cooldown = config.TransferCooldownMs;
-        if (ImGui.InputInt("###Cooldown", ref cooldown))
+
+        if (ImGui.CollapsingHeader("By container combination", ImGuiTreeNodeFlags.DefaultOpen))
         {
-            config.TransferCooldownMs = Math.Max(0, Math.Min(1000, cooldown));
-            config.Save();
+            Indent(() =>
+            {
+                Bullet("Inventory + Saddlebags", "Add All to Saddlebag / Remove All from Saddlebag");
+                Bullet("Inventory + Armoury", "Place in Armoury Chest / Return to Inventory");
+                Bullet("Inventory + Retainer", "Entrust to Retainer / Retrieve from Retainer");
+                Bullet("Retainer + Saddlebags", "Add All to Saddlebag / Entrust to Retainer");
+                Bullet("Trade window open", "Shift → Trade (auto-confirms stack size when enabled)");
+                Bullet("Vendor shop open", "Shift → Sell");
+                Bullet("FC chest open", "Shift on inventory → deposit to active tab; Shift on chest → Remove");
+            });
         }
 
         ImGui.Spacing();
-        ImGui.Separator();
+        ImGui.TextColored(MutedColor, "Tip: Brief Shift/Ctrl/Alt taps still count — you do not need to hold through the whole menu.");
+        ImGui.TextColored(MutedColor, "Command: /qt");
+    }
 
-        // Instructions
-        ImGui.TextColored(new Vector4(0.4f, 0.8f, 1f, 1f), "How to Use:");
-        ImGui.BulletText("Hold SHIFT and RIGHT-CLICK to use the open container's quick action");
-        ImGui.BulletText("Hold CTRL and RIGHT-CLICK to use Armoury actions when a Saddlebag, Retainer, or Company Chest is open (Inventory ↔ Armoury)");
-        ImGui.BulletText("Hold ALT and RIGHT-CLICK to split a stack in half (or remove half from Company Chest)");
-        ImGui.BulletText("Inventory + Saddlebags: Inventory → \"Add All to Saddlebag\", Saddlebags → \"Remove All from Saddlebag\"");
-        ImGui.BulletText("Armoury + Saddlebags: Armoury → \"Add All to Saddlebag\"");
-        ImGui.BulletText("Inventory + Retainer: Inventory → \"Entrust to Retainer\", Retainer → \"Retrieve from Retainer\"");
-        ImGui.BulletText("Armoury + Retainer: Armoury → \"Entrust to Retainer\", Retainer → \"Retrieve from Retainer\"");
-        ImGui.BulletText("Retainer + Saddlebags: Retainer → \"Add All to Saddlebag\", Saddlebags → \"Entrust to Retainer\"");
-        ImGui.BulletText("Inventory + Armoury (no special container): (Gear) Inventory → \"Place in Armoury Chest\", Armoury → \"Return to Inventory\"");
-        ImGui.BulletText("Company Chest (FreeCompanyChest) open: Shift+RClick Inventory/Armoury deposits, Shift+RClick Company Chest withdraws (\"Remove\")");
-        ImGui.BulletText("Vendor Shop open: Shift+RClick to auto-select \"Sell\"; enable \"Auto-confirm vendor sell\" to auto-fill quantity and confirm.");
-        ImGui.BulletText("Middle-Click: Sort the clicked container when a \"Sort\" menu entry exists. In Company Chest, MMB runs an organize pass (stack + compact).");
-        ImGui.BulletText("Use /qt or click 'Open Config' in plugin list to reopen this window");
+    private void DrawModifierTable()
+    {
+        if (!ImGui.BeginTable("ModifierTable", 2, ImGuiTableFlags.Borders | ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingStretchProp))
+            return;
 
+        ImGui.TableSetupColumn("Input", ImGuiTableColumnFlags.WidthFixed, 120);
+        ImGui.TableSetupColumn("Action", ImGuiTableColumnFlags.WidthStretch);
+        ImGui.TableHeadersRow();
+
+        TableRow("Shift + Right-click", "Default quick transfer (direction depends on what's open)");
+        TableRow("Ctrl + Right-click", "Armoury actions when Saddlebag, Retainer, or FC chest is open");
+        TableRow("Alt + Right-click", "Split stack in half (or remove half from FC chest)");
+        TableRow("Middle-click", "Sort container, or FC chest organize if enabled");
+
+        ImGui.EndTable();
+    }
+
+    private static void TableRow(string input, string action)
+    {
+        ImGui.TableNextRow();
+        ImGui.TableSetColumnIndex(0);
+        ImGui.TextColored(HeaderColor, input);
+        ImGui.TableSetColumnIndex(1);
+        ImGui.TextWrapped(action);
+    }
+
+    private static void Bullet(string title, string detail)
+    {
+        ImGui.BulletText(title);
+        ImGui.SameLine(0, 4);
+        ImGui.TextColored(MutedColor, "—");
+        ImGui.SameLine(0, 4);
+        ImGui.TextWrapped(detail);
+    }
+
+    private static void Hint(string text)
+    {
+        ImGui.PushStyleColor(ImGuiCol.Text, MutedColor);
+        ImGui.TextWrapped(text);
+        ImGui.PopStyleColor();
         ImGui.Spacing();
-        ImGui.Separator();
-        ImGui.TextColored(new Vector4(0.8f, 0.8f, 0.4f, 1f), "Notes:");
-        ImGui.BulletText("This uses the game's existing context menu options (no manual slot moving).");
-        ImGui.BulletText("If an option isn't available for the clicked item, nothing happens.");
-        ImGui.BulletText("If you tap Shift briefly, the action still triggers (it is captured when the menu opens).");
-        ImGui.BulletText("For Company Chest deposits, this uses the same UI move function as drag+drop would.");
-        ImGui.Spacing();
+    }
 
-        // Save button
-        if (ImGui.Button("Save & Close###SaveClose"))
-        {
-            config.Save();
-            IsOpen = false;
-        }
+    private static void Indent(Action draw)
+    {
+        ImGui.Indent(12);
+        draw();
+        ImGui.Unindent(12);
     }
 }
