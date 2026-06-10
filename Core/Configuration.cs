@@ -14,6 +14,7 @@ public sealed class Configuration : IPluginConfiguration
 
     public bool EnableCompanyChest { get; set; } = true;
     public bool AutoConfirmCompanyChestQuantity { get; set; } = true;
+    public bool CompanyChestDepositEmptySlotsFirst { get; set; } = true;
     public int CompanyChestCompartments { get; set; } = 3; // 3..5 (default game starts at 3)
 
     public bool EnableVendorQuickSell { get; set; } = true;
