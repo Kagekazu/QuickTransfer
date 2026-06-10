@@ -126,6 +126,15 @@ public class QuickTransferWindow : Window, IDisposable
 
                 Hint("Auto-fills and confirms store, remove, and split quantity prompts.");
 
+                var emptySlotsFirst = config.CompanyChestDepositEmptySlotsFirst;
+                if (ImGui.Checkbox("Deposit to empty slots first", ref emptySlotsFirst))
+                {
+                    config.CompanyChestDepositEmptySlotsFirst = emptySlotsFirst;
+                    config.Save();
+                }
+
+                Hint("Avoids topping off partial stacks when an empty slot exists — one server check per deposit. Use middle-click organize to stack later.");
+
                 ImGui.Text("Unlocked item tabs");
                 ImGui.SetNextItemWidth(220);
                 var compartments = config.CompanyChestCompartments;

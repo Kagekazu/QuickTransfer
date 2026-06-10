@@ -491,9 +491,7 @@ public sealed unsafe partial class Plugin
         var maxStack = InventoryHelpers.GetItemStackSize(itemId);
         var needsQuantityConfirm = qty > 1 && maxStack > 1;
 
-        // Prefer stacking into an existing stack; otherwise use the first empty slot.
-        if (!TryFindCompanyChestBestStackSlot(pages, itemId, isHq, maxStack, out var destType, out var destSlot) &&
-            !TryFindCompanyChestFirstEmptySlot(pages, out destType, out destSlot))
+        if (!TryResolveCompanyChestDepositDestination(pages, itemId, isHq, maxStack, out var destType, out var destSlot))
         {
             companyChestDeposit.Active = false;
             return;
@@ -1384,6 +1382,28 @@ public sealed unsafe partial class Plugin
                 }
             }
         }
+    }
+
+    private bool TryResolveCompanyChestDepositDestination(
+        InventoryType[] pages,
+        uint itemId,
+        bool isHq,
+        uint maxStack,
+        out InventoryType destType,
+        out uint destSlot)
+    {
+        if (Configuration.CompanyChestDepositEmptySlotsFirst)
+        {
+            if (TryFindCompanyChestFirstEmptySlot(pages, out destType, out destSlot))
+                return true;
+
+            return TryFindCompanyChestBestStackSlot(pages, itemId, isHq, maxStack, out destType, out destSlot);
+        }
+
+        if (TryFindCompanyChestBestStackSlot(pages, itemId, isHq, maxStack, out destType, out destSlot))
+            return true;
+
+        return TryFindCompanyChestFirstEmptySlot(pages, out destType, out destSlot);
     }
 
     private static bool TryFindCompanyChestFirstEmptySlot(
