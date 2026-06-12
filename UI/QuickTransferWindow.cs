@@ -28,7 +28,7 @@ public class QuickTransferWindow : Window, IDisposable
         TitleBarButtons.Add(new()
         {
             Icon = FontAwesomeIcon.Heart,
-            ShowTooltip = () => ImGui.SetTooltip("Support on Ko-fi"),
+            ShowTooltip = () => ImGui.SetTooltip("Ko-fi (because sorting is thirsty work)"),
             Click = _ => Process.Start(new ProcessStartInfo
             {
                 FileName = "https://ko-fi.com/kagekazu",
