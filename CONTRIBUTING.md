@@ -9,8 +9,6 @@ Thank you for your interest in contributing!
 3. Open **`QuickTransfer.slnx`** at the repo root in Rider or Visual Studio, then build with **Debug | x64** or **Release | x64**.
 4. Point Dev Plugin Locations at `QuickTransfer\bin\x64\Debug\QuickTransfer.dll` (or Release).
 
-Source layout follows the Saucy pattern: `Core/` (plugin entry, config, UI), `Framework/` (shared helpers).
-
 ## Pull requests
 
 - Keep changes focused — one feature or fix per PR when possible.
