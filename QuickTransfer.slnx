@@ -1,14 +1,3 @@
 <Solution>
-    <Configurations>
-        <Platform Name="x64"/>
-    </Configurations>
-    <Folder Name="/Solution Items/">
-        <File Path="README.md"/>
-        <File Path="CONTRIBUTING.md"/>
-        <File Path="QuickTransfer.json"/>
-        <File Path="LICENSE"/>
-    </Folder>
-    <Project Path="QuickTransfer.csproj">
-        <Platform Project="x64"/>
-    </Project>
+  <Project Path="QuickTransfer.csproj" />
 </Solution>

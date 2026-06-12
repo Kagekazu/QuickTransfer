@@ -1,10 +1,13 @@
-using Dalamud.Bindings.ImGui;
+using Dalamud.Interface;
 using Dalamud.Interface.Windowing;
+using System.Diagnostics;
 using System.Numerics;
 namespace QuickTransfer;
 
 public class QuickTransferWindow : Window, IDisposable
 {
+    private const string WindowId = "QuickTransferConfig";
+
     private static readonly Vector4 HeaderColor = new(0.45f, 0.78f, 1f, 1f);
     private static readonly Vector4 MutedColor = new(0.65f, 0.65f, 0.65f, 1f);
     private static readonly Vector4 WarningColor = new(0.95f, 0.75f, 0.35f, 1f);
@@ -12,14 +15,26 @@ public class QuickTransferWindow : Window, IDisposable
     private static readonly Vector4 DisabledColor = new(0.55f, 0.55f, 0.55f, 1f);
 
     private readonly Configuration config;
+    private bool drewTitleBarVersion;
 
     public QuickTransferWindow(Configuration config)
-        : base("QuickTransfer###QuickTransferConfig")
+        : base($"QuickTransfer###{WindowId}")
     {
         this.config = config;
 
         SizeCondition = ImGuiCond.FirstUseEver;
         Size = new Vector2(520, 560);
+
+        TitleBarButtons.Add(new()
+        {
+            Icon = FontAwesomeIcon.Heart,
+            ShowTooltip = () => ImGui.SetTooltip("Support on Ko-fi"),
+            Click = _ => Process.Start(new ProcessStartInfo
+            {
+                FileName = "https://ko-fi.com/kagekazu",
+                UseShellExecute = true
+            })
+        });
     }
 
     public void Dispose()
@@ -27,8 +42,35 @@ public class QuickTransferWindow : Window, IDisposable
         // no-op
     }
 
+    public override void OnClose()
+    {
+        config.PersistIfDirty();
+        TitleBarVersion.ClearCache();
+        base.OnClose();
+    }
+
+    public override void PostDraw()
+    {
+        if (!drewTitleBarVersion)
+        {
+            TitleBarVersion.DrawFromWindowLookup(
+                TitleBarButtons.Count,
+                AllowPinning || AllowClickthrough,
+                WindowName);
+        }
+
+        drewTitleBarVersion = false;
+        base.PostDraw();
+    }
+
     public override void Draw()
     {
+        TitleBarVersion.DrawFromContext(
+            TitleBarButtons.Count,
+            AllowPinning || AllowClickthrough,
+            WindowName);
+        drewTitleBarVersion = true;
+
         DrawHeader();
         ImGui.Spacing();
 
@@ -48,11 +90,6 @@ public class QuickTransferWindow : Window, IDisposable
 
             ImGui.EndTabBar();
         }
-
-        ImGui.Spacing();
-        ImGui.Separator();
-        if (ImGui.Button("Close"))
-            IsOpen = false;
     }
 
     private void DrawHeader()
@@ -63,11 +100,11 @@ public class QuickTransferWindow : Window, IDisposable
 
         ImGui.Spacing();
 
-        var enabled = config.Enabled;
+        bool enabled = config.Enabled;
         if (ImGui.Checkbox("Plugin enabled", ref enabled))
         {
             config.Enabled = enabled;
-            config.Save();
+            config.OnSettingChanged();
         }
 
         Hint("Master switch. When off, all shortcuts are ignored.");
@@ -81,11 +118,11 @@ public class QuickTransferWindow : Window, IDisposable
         {
             Indent(() =>
             {
-                var mmbSort = config.EnableMiddleClickSort;
+                bool mmbSort = config.EnableMiddleClickSort;
                 if (ImGui.Checkbox("Sort inventories on middle-click", ref mmbSort))
                 {
                     config.EnableMiddleClickSort = mmbSort;
-                    config.Save();
+                    config.OnSettingChanged();
                 }
 
                 Hint("Middle-click an item to auto-select Sort when the container supports it.");
@@ -96,60 +133,59 @@ public class QuickTransferWindow : Window, IDisposable
         {
             Indent(() =>
             {
-                var enableFc = config.EnableCompanyChest;
+                bool enableFc = config.EnableCompanyChest;
                 if (ImGui.Checkbox("Enable FC chest helpers", ref enableFc))
                 {
                     config.EnableCompanyChest = enableFc;
-                    config.Save();
+                    config.OnSettingChanged();
                 }
 
-                Hint("Shift+right-click deposits from inventory/armoury; Shift+right-click the chest withdraws.");
+                Hint("Shift+right-click deposits from inventory/armoury/crystals; Shift+right-click the chest withdraws.");
 
                 ImGui.Spacing();
-                ImGui.BeginDisabled(!config.EnableCompanyChest);
-
-                var mmbOrganize = config.EnableCompanyChestMiddleClickOrganize;
-                if (ImGui.Checkbox("Middle-click organize (stack + compact)", ref mmbOrganize))
+                using (ImRaii.Disabled(!config.EnableCompanyChest))
                 {
-                    config.EnableCompanyChestMiddleClickOrganize = mmbOrganize;
-                    config.Save();
+                    bool mmbOrganize = config.EnableCompanyChestMiddleClickOrganize;
+                    if (ImGui.Checkbox("Middle-click organize (stack + compact)", ref mmbOrganize))
+                    {
+                        config.EnableCompanyChestMiddleClickOrganize = mmbOrganize;
+                        config.OnSettingChanged();
+                    }
+
+                    Hint("FC chest has no Sort menu — middle-click runs an organize pass on the active tab.");
+
+                    bool autoConfirmQty = config.AutoConfirmCompanyChestQuantity;
+                    if (ImGui.Checkbox("Auto-confirm quantity dialogs", ref autoConfirmQty))
+                    {
+                        config.AutoConfirmCompanyChestQuantity = autoConfirmQty;
+                        config.OnSettingChanged();
+                    }
+
+                    Hint("Auto-fills and confirms store, remove, and split quantity prompts.");
+
+                    bool emptySlotsFirst = config.CompanyChestDepositEmptySlotsFirst;
+                    if (ImGui.Checkbox("Deposit to empty slots first", ref emptySlotsFirst))
+                    {
+                        config.CompanyChestDepositEmptySlotsFirst = emptySlotsFirst;
+                        config.OnSettingChanged();
+                    }
+
+                    Hint("Avoids topping off partial stacks when an empty slot exists — one server check per deposit. Use middle-click organize to stack later.");
+
+                    ImGui.Text("Unlocked item tabs");
+                    ImGui.SetNextItemWidth(220);
+                    int compartments = config.CompanyChestCompartments;
+                    if (ImGui.SliderInt("##CompanyChestCompartments", ref compartments, 3, 5))
+                    {
+                        config.CompanyChestCompartments = compartments;
+                        config.OnSettingChanged();
+                    }
+
+                    ImGui.SameLine();
+                    ImGui.TextColored(MutedColor, $"{compartments} tab(s)");
+
+                    Hint("Match how many item compartments your FC has unlocked (usually 3, up to 5).");
                 }
-
-                Hint("FC chest has no Sort menu — middle-click runs an organize pass on the active tab.");
-
-                var autoConfirmQty = config.AutoConfirmCompanyChestQuantity;
-                if (ImGui.Checkbox("Auto-confirm quantity dialogs", ref autoConfirmQty))
-                {
-                    config.AutoConfirmCompanyChestQuantity = autoConfirmQty;
-                    config.Save();
-                }
-
-                Hint("Auto-fills and confirms store, remove, and split quantity prompts.");
-
-                var emptySlotsFirst = config.CompanyChestDepositEmptySlotsFirst;
-                if (ImGui.Checkbox("Deposit to empty slots first", ref emptySlotsFirst))
-                {
-                    config.CompanyChestDepositEmptySlotsFirst = emptySlotsFirst;
-                    config.Save();
-                }
-
-                Hint("Avoids topping off partial stacks when an empty slot exists — one server check per deposit. Use middle-click organize to stack later.");
-
-                ImGui.Text("Unlocked item tabs");
-                ImGui.SetNextItemWidth(220);
-                var compartments = config.CompanyChestCompartments;
-                if (ImGui.SliderInt("##CompanyChestCompartments", ref compartments, 3, 5))
-                {
-                    config.CompanyChestCompartments = compartments;
-                    config.Save();
-                }
-
-                ImGui.SameLine();
-                ImGui.TextColored(MutedColor, $"{compartments} tab(s)");
-
-                Hint("Match how many item compartments your FC has unlocked (usually 3, up to 5).");
-
-                ImGui.EndDisabled();
             });
         }
 
@@ -157,27 +193,26 @@ public class QuickTransferWindow : Window, IDisposable
         {
             Indent(() =>
             {
-                var enableVendor = config.EnableVendorQuickSell;
+                bool enableVendor = config.EnableVendorQuickSell;
                 if (ImGui.Checkbox("Enable vendor quick sell", ref enableVendor))
                 {
                     config.EnableVendorQuickSell = enableVendor;
-                    config.Save();
+                    config.OnSettingChanged();
                 }
 
                 Hint("With a vendor shop open, Shift+right-click selects Sell.");
 
-                ImGui.BeginDisabled(!config.EnableVendorQuickSell);
-
-                var autoConfirmSell = config.AutoConfirmVendorSell;
-                if (ImGui.Checkbox("Auto-confirm sell dialogs", ref autoConfirmSell))
+                using (ImRaii.Disabled(!config.EnableVendorQuickSell))
                 {
-                    config.AutoConfirmVendorSell = autoConfirmSell;
-                    config.Save();
+                    bool autoConfirmSell = config.AutoConfirmVendorSell;
+                    if (ImGui.Checkbox("Auto-confirm sell dialogs", ref autoConfirmSell))
+                    {
+                        config.AutoConfirmVendorSell = autoConfirmSell;
+                        config.OnSettingChanged();
+                    }
+
+                    Hint("Auto-fills quantity and confirms \"How many?\" and \"Are you certain?\" prompts.");
                 }
-
-                Hint("Auto-fills quantity and confirms \"How many?\" and \"Are you certain?\" prompts.");
-
-                ImGui.EndDisabled();
             });
         }
 
@@ -187,22 +222,22 @@ public class QuickTransferWindow : Window, IDisposable
             {
                 ImGui.Text("Transfer cooldown");
                 ImGui.SetNextItemWidth(220);
-                var cooldown = config.TransferCooldownMs;
+                int cooldown = config.TransferCooldownMs;
                 if (ImGui.SliderInt("##TransferCooldownMs", ref cooldown, 0, 1000, "%d ms"))
                 {
                     config.TransferCooldownMs = cooldown;
-                    config.Save();
+                    config.OnSettingChanged();
                 }
 
                 Hint("Minimum time between right-click actions. Increase if actions feel too fast or get skipped.");
 
                 ImGui.Spacing();
 
-                var debugMode = config.DebugMode;
+                bool debugMode = config.DebugMode;
                 if (ImGui.Checkbox("Debug mode", ref debugMode))
                 {
                     config.DebugMode = debugMode;
-                    config.Save();
+                    config.OnSettingChanged();
                 }
 
                 ImGui.TextColored(WarningColor, "Logs detailed actions to chat. For troubleshooting only.");
@@ -231,7 +266,7 @@ public class QuickTransferWindow : Window, IDisposable
                 Bullet("Retainer + Saddlebags", "Add All to Saddlebag / Entrust to Retainer");
                 Bullet("Trade window open", "Shift → Trade (auto-confirms stack size when enabled)");
                 Bullet("Vendor shop open", "Shift → Sell");
-                Bullet("FC chest open", "Shift on inventory → deposit to active tab; Shift on chest → Remove");
+                Bullet("FC chest open", "Shift on inventory/crystals → deposit to active tab; Shift on chest → Remove");
             });
         }
 
@@ -242,7 +277,8 @@ public class QuickTransferWindow : Window, IDisposable
 
     private void DrawModifierTable()
     {
-        if (!ImGui.BeginTable("ModifierTable", 2, ImGuiTableFlags.Borders | ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingStretchProp))
+        using ImRaii.TableDisposable table = ImRaii.Table("ModifierTable", 2, ImGuiTableFlags.Borders | ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingStretchProp);
+        if (!table)
             return;
 
         ImGui.TableSetupColumn("Input", ImGuiTableColumnFlags.WidthFixed, 120);
@@ -253,8 +289,6 @@ public class QuickTransferWindow : Window, IDisposable
         TableRow("Ctrl + Right-click", "Armoury actions when Saddlebag, Retainer, or FC chest is open");
         TableRow("Alt + Right-click", "Split stack in half (or remove half from FC chest)");
         TableRow("Middle-click", "Sort container, or FC chest organize if enabled");
-
-        ImGui.EndTable();
     }
 
     private static void TableRow(string input, string action)
@@ -277,9 +311,9 @@ public class QuickTransferWindow : Window, IDisposable
 
     private static void Hint(string text)
     {
-        ImGui.PushStyleColor(ImGuiCol.Text, MutedColor);
-        ImGui.TextWrapped(text);
-        ImGui.PopStyleColor();
+        using (ImRaii.PushColor(ImGuiCol.Text, MutedColor))
+            ImGui.TextWrapped(text);
+
         ImGui.Spacing();
     }
 

@@ -12,7 +12,7 @@ internal static unsafe class AddonHelpers
         {
             try
             {
-                var stage = AtkStage.Instance();
+                AtkStage* stage = AtkStage.Instance();
                 return stage == null ? null : &stage->RaptureAtkUnitManager->AtkUnitManager;
             }
             catch
@@ -29,11 +29,11 @@ internal static unsafe class AddonHelpers
             if (id is 0 or > ushort.MaxValue)
                 return null;
 
-            var mgr = UnitManager;
+            AtkUnitManager* mgr = UnitManager;
             if (mgr == null)
                 return null;
 
-            var addon = mgr->GetAddonById((ushort)id);
+            AtkUnitBase* addon = mgr->GetAddonById((ushort)id);
             return addon != null && addon->Id == id ? addon : null;
         }
         catch
@@ -49,7 +49,7 @@ internal static unsafe class AddonHelpers
             if (string.IsNullOrEmpty(addonName) || index < 1)
                 return null;
 
-            var mgr = UnitManager;
+            AtkUnitManager* mgr = UnitManager;
             return mgr == null ? null : mgr->GetAddonByName(addonName, index);
         }
         catch
@@ -64,10 +64,10 @@ internal static unsafe class AddonHelpers
         if (string.IsNullOrEmpty(addonName))
             return false;
 
-        var limit = Math.Max(1, maxIndex);
-        for (var i = 1; i <= limit; i++)
+        int limit = Math.Max(1, maxIndex);
+        for(int i = 1; i <= limit; i++)
         {
-            var candidate = GetAddonByName(addonName, i);
+            AtkUnitBase* candidate = GetAddonByName(addonName, i);
             if (candidate == null || !candidate->IsVisible)
                 continue;
 

@@ -35,7 +35,7 @@ internal static unsafe class ContextMenuHandler
 
     public static bool ContextLabelMatches(AutoContextAction desiredAction, string menuText)
     {
-        var t = menuText.Trim();
+        string t = menuText.Trim();
         static bool Has(string s, string needle) => s.Contains(needle, StringComparison.OrdinalIgnoreCase);
 
         return desiredAction switch
@@ -108,7 +108,7 @@ internal static unsafe class ContextMenuHandler
         AtkUnitBase* addon = null;
         try
         {
-            var agentAddonId = agent->AgentInterface.GetAddonId();
+            uint agentAddonId = agent->AgentInterface.GetAddonId();
             if (agentAddonId != 0)
                 addon = AddonHelpers.GetAddonById(agentAddonId);
         }
@@ -133,10 +133,10 @@ internal static unsafe class ContextMenuHandler
     {
         try
         {
-            var agentAddonId = agent->AgentInterface.GetAddonId();
+            uint agentAddonId = agent->AgentInterface.GetAddonId();
             if (agentAddonId != 0)
             {
-                var addon = AddonHelpers.GetAddonById(agentAddonId);
+                AtkUnitBase* addon = AddonHelpers.GetAddonById(agentAddonId);
                 if (addon != null)
                 {
                     CloseContextMenuAddon(agent, addon);
@@ -151,7 +151,7 @@ internal static unsafe class ContextMenuHandler
 
         try
         {
-            var cm = AddonHelpers.GetAddonByName(QuickTransferConstants.ContextMenuAddonName);
+            AtkUnitBase* cm = AddonHelpers.GetAddonByName(QuickTransferConstants.ContextMenuAddonName);
             if (cm != null)
                 CloseContextMenuAddon(agent, cm);
         }
@@ -188,19 +188,19 @@ internal static unsafe class ContextMenuHandler
         chosenIndex = -1;
 
         // Single-pass: decode each label once, record first match per action.
-        var foundAny = false;
+        bool foundAny = false;
 
         int removeIdx = -1, addIdx = -1, placeIdx = -1, returnIdx = -1, entrustIdx = -1, retrieveIdx = -1, companyRemoveIdx = -1, splitIdx = -1, tradeIdx = -1, sellIdx = -1;
         string? removeTxt = null, addTxt = null, placeTxt = null, returnTxt = null, entrustTxt = null, retrieveTxt = null, companyRemoveTxt = null, splitTxt = null, tradeTxt = null, sellTxt = null;
 
-        var max = Math.Min(agent->ContextItemCount, 64);
-        for (var i = 0; i < max; i++)
+        int max = Math.Min(agent->ContextItemCount, 64);
+        for(int i = 0; i < max; i++)
         {
-            var param = agent->EventParams[agent->ContexItemStartIndex + i];
+            AtkValue param = agent->EventParams[agent->ContexItemStartIndex + i];
             if (param.Type is not (AtkValueType.String or AtkValueType.ManagedString))
                 continue;
 
-            var text = AtkValueHelpers.ReadAtkValueString(param);
+            string text = AtkValueHelpers.ReadAtkValueString(param);
             if (string.IsNullOrWhiteSpace(text))
                 continue;
 
@@ -279,11 +279,11 @@ internal static unsafe class ContextMenuHandler
         if (!foundAny)
             return false;
 
-        var saddlebagOpen = InventoryHelpers.IsSaddlebagOpen();
-        var retainerOpen = InventoryHelpers.IsRetainerOpen();
-        var companyChestOpen = InventoryHelpers.IsCompanyChestOpen();
-        var tradeOpen = InventoryHelpers.IsTradeOpen();
-        var vendorOpen = InventoryHelpers.IsVendorOpen();
+        bool saddlebagOpen = InventoryHelpers.IsSaddlebagOpen();
+        bool retainerOpen = InventoryHelpers.IsRetainerOpen();
+        bool companyChestOpen = InventoryHelpers.IsCompanyChestOpen();
+        bool tradeOpen = InventoryHelpers.IsTradeOpen();
+        bool vendorOpen = InventoryHelpers.IsVendorOpen();
 
         // Choose the best action that exists in the menu.
         (int idx, string? txt) chosen;
@@ -375,16 +375,16 @@ internal static unsafe class ContextMenuHandler
         chosenText = string.Empty;
         chosenIndex = -1;
 
-        var undoSortIdx = -1;
+        int undoSortIdx = -1;
 
-        var max = Math.Min(agent->ContextItemCount, 64);
-        for (var i = 0; i < max; i++)
+        int max = Math.Min(agent->ContextItemCount, 64);
+        for(int i = 0; i < max; i++)
         {
-            var param = agent->EventParams[agent->ContexItemStartIndex + i];
+            AtkValue param = agent->EventParams[agent->ContexItemStartIndex + i];
             if (param.Type is not (AtkValueType.String or AtkValueType.ManagedString))
                 continue;
 
-            var text = AtkValueHelpers.ReadAtkValueString(param);
+            string text = AtkValueHelpers.ReadAtkValueString(param);
             if (string.IsNullOrWhiteSpace(text))
                 continue;
 
@@ -428,16 +428,16 @@ internal static unsafe class ContextMenuHandler
             if (ctxAddon == null || ctxAddon->AtkValues == null || ctxAddon->AtkValuesCount <= 0)
                 return false;
 
-            var count = Math.Min((int)ctxAddon->AtkValuesCount, 128);
+            int count = Math.Min((int)ctxAddon->AtkValuesCount, 128);
             if (debugMode)
                 Svc.Log.Information($"[QuickTransfer] ContextMenu AtkValuesCount={ctxAddon->AtkValuesCount} (scanning {count}).");
-            for (var i = 0; i < count; i++)
+            for(int i = 0; i < count; i++)
             {
-                var v = ctxAddon->AtkValues[i];
+                AtkValue v = ctxAddon->AtkValues[i];
                 if (v.Type is not (AtkValueType.String or AtkValueType.ManagedString or AtkValueType.ConstString))
                     continue;
 
-                var s = AtkValueHelpers.ReadAtkValueString(v);
+                string s = AtkValueHelpers.ReadAtkValueString(v);
                 if (string.IsNullOrWhiteSpace(s))
                     continue;
 
@@ -464,21 +464,21 @@ internal static unsafe class ContextMenuHandler
     {
         try
         {
-            var max = Math.Min(Math.Min(agent->ContextItemCount, 64), maxItems);
-            for (var i = 0; i < max; i++)
+            int max = Math.Min(Math.Min(agent->ContextItemCount, 64), maxItems);
+            for(int i = 0; i < max; i++)
             {
-                var param = agent->EventParams[agent->ContexItemStartIndex + i];
+                AtkValue param = agent->EventParams[agent->ContexItemStartIndex + i];
                 if (param.Type is not (AtkValueType.String or AtkValueType.ManagedString))
                     continue;
 
-                var text = AtkValueHelpers.ReadAtkValueString(param);
+                string text = AtkValueHelpers.ReadAtkValueString(param);
                 if (string.IsNullOrWhiteSpace(text))
                     continue;
 
                 Svc.Log.Information($"[QuickTransfer] Menu idx={i}: '{text}'");
             }
         }
-        catch (Exception ex)
+        catch(Exception ex)
         {
             Svc.Log.Warning(ex, "[QuickTransfer] Failed to dump context menu.");
         }

@@ -61,7 +61,7 @@ internal readonly struct ChestSortKey(uint category, uint itemId, bool isHq) : I
 
     public int CompareTo(ChestSortKey other)
     {
-        var c = category.CompareTo(other.category);
+        int c = category.CompareTo(other.category);
         if (c != 0) return c;
         c = itemId.CompareTo(other.itemId);
         return c != 0 ? c : hq.CompareTo(other.hq);

@@ -28,7 +28,7 @@ public sealed unsafe partial class Plugin
                 return;
 
             AtkValue* values = (AtkValue*)setup.AtkValues;
-            var count = (int)setup.AtkValueCount;
+            int count = (int)setup.AtkValueCount;
             if (values == null || count < 7)
                 return;
 
@@ -38,7 +38,7 @@ public sealed unsafe partial class Plugin
             // Guard against cross-confirmation: only touch the prompt we intended (store/remove/sell).
             if (pendingNumericKind != PendingNumericKind.None)
             {
-                var prompt = values[6].Type is AtkValueType.String or AtkValueType.ManagedString ? AtkValueHelpers.ReadAtkValueString(values[6]) : string.Empty;
+                string prompt = values[6].Type is AtkValueType.String or AtkValueType.ManagedString ? AtkValueHelpers.ReadAtkValueString(values[6]) : string.Empty;
                 if (pendingNumericKind == PendingNumericKind.Store && !prompt.Contains("store", StringComparison.OrdinalIgnoreCase))
                     return;
                 if (pendingNumericKind == PendingNumericKind.Remove && !prompt.Contains("remove", StringComparison.OrdinalIgnoreCase))
@@ -57,14 +57,14 @@ public sealed unsafe partial class Plugin
                 return;
             }
 
-            var min = values[2].UInt;
-            var max = values[3].UInt;
-            var desired = max < min ? min : max;
+            uint min = values[2].UInt;
+            uint max = values[3].UInt;
+            uint desired = max < min ? min : max;
 
             // Log current/default if present.
             if (Configuration.DebugMode)
             {
-                var curStr = values[5].Type == AtkValueType.UInt ? values[5].UInt.ToString() : "n/a";
+                string curStr = values[5].Type == AtkValueType.UInt ? values[5].UInt.ToString() : "n/a";
                 Svc.Log.Information($"[QuickTransfer] InputNumeric PreSetup: min={min}, max={max}, default={values[4].UInt}, current={curStr}");
             }
 
@@ -81,11 +81,11 @@ public sealed unsafe partial class Plugin
 
             if (Configuration.DebugMode)
             {
-                var prompt = values[6].Type is AtkValueType.String or AtkValueType.ManagedString ? AtkValueHelpers.ReadAtkValueString(values[6]) : string.Empty;
+                string prompt = values[6].Type is AtkValueType.String or AtkValueType.ManagedString ? AtkValueHelpers.ReadAtkValueString(values[6]) : string.Empty;
                 Svc.Log.Information($"[QuickTransfer] InputNumeric PreSetup: prompt='{prompt}', min={min}, max={max}, setDefault={desired}");
             }
         }
-        catch (Exception ex)
+        catch(Exception ex)
         {
             Svc.Log.Warning(ex, "[QuickTransfer] InputNumeric PreSetup failed.");
         }
@@ -99,12 +99,12 @@ public sealed unsafe partial class Plugin
             if (inputNumeric->AtkValues == null || inputNumeric->AtkValuesCount < 7)
                 return false;
 
-            var minValue = inputNumeric->AtkValues + 2;
-            var maxValue = inputNumeric->AtkValues + 3;
-            var defaultValue = inputNumeric->AtkValues + 4;
-            var currentValue = inputNumeric->AtkValuesCount > 5 ? (inputNumeric->AtkValues + 5) : null;
-            var promptVal = inputNumeric->AtkValues + 6;
-            var prompt = promptVal->Type is AtkValueType.String or AtkValueType.ManagedString ? AtkValueHelpers.ReadAtkValueString(*promptVal) : string.Empty;
+            AtkValue* minValue = inputNumeric->AtkValues + 2;
+            AtkValue* maxValue = inputNumeric->AtkValues + 3;
+            AtkValue* defaultValue = inputNumeric->AtkValues + 4;
+            AtkValue* currentValue = inputNumeric->AtkValuesCount > 5 ? (inputNumeric->AtkValues + 5) : null;
+            AtkValue* promptVal = inputNumeric->AtkValues + 6;
+            string prompt = promptVal->Type is AtkValueType.String or AtkValueType.ManagedString ? AtkValueHelpers.ReadAtkValueString(*promptVal) : string.Empty;
 
             // Guard: only confirm prompts we expect.
             if (kind == PendingNumericKind.Store && !prompt.Contains("store", StringComparison.OrdinalIgnoreCase))
@@ -130,8 +130,8 @@ public sealed unsafe partial class Plugin
             if (minValue->Type != AtkValueType.UInt || maxValue->Type != AtkValueType.UInt || defaultValue->Type != AtkValueType.UInt)
                 return false;
 
-            var min = minValue->UInt;
-            var max = maxValue->UInt;
+            uint min = minValue->UInt;
+            uint max = maxValue->UInt;
 
             // Split dialogs are localized and can also be emitted by InventoryExpansion without "split" in the prompt.
             // Accept if either:
@@ -139,9 +139,9 @@ public sealed unsafe partial class Plugin
             // - max matches the expected qty-1 we recorded when arming the Split.
             if (kind == PendingNumericKind.Split && !prompt.Contains("split", StringComparison.OrdinalIgnoreCase))
             {
-                var nowMs = Environment.TickCount64;
-                var expectedMax = pendingSplitExpectedMax;
-                var okByExpected = expectedMax != 0 && nowMs <= pendingSplitExpectedUntilMs && max == expectedMax;
+                long nowMs = Environment.TickCount64;
+                uint expectedMax = pendingSplitExpectedMax;
+                bool okByExpected = expectedMax != 0 && nowMs <= pendingSplitExpectedUntilMs && max == expectedMax;
                 if (!okByExpected)
                     return false;
             }
@@ -177,9 +177,9 @@ public sealed unsafe partial class Plugin
 
             pendingCompanyChestNumericDesired = desired;
 
-            var beforeDefault = defaultValue->UInt;
-            var beforeCurrentUInt = (currentValue != null && currentValue->Type == AtkValueType.UInt) ? currentValue->UInt : 0U;
-            var beforeCurrentStr = (currentValue != null && currentValue->Type is AtkValueType.String or AtkValueType.ManagedString or AtkValueType.ConstString)
+            uint beforeDefault = defaultValue->UInt;
+            uint beforeCurrentUInt = (currentValue != null && currentValue->Type == AtkValueType.UInt) ? currentValue->UInt : 0U;
+            string beforeCurrentStr = (currentValue != null && currentValue->Type is AtkValueType.String or AtkValueType.ManagedString or AtkValueType.ConstString)
                 ? AtkValueHelpers.ReadAtkValueString(*currentValue)
                 : string.Empty;
 
@@ -195,7 +195,7 @@ public sealed unsafe partial class Plugin
                 {
                     // This dialog uses a String "current quantity" slot on your client build.
                     // Overwrite the existing buffer in-place (max is <= 999 so this is safe).
-                    var s = desired.ToString();
+                    string s = desired.ToString();
                     AtkValueHelpers.WriteUtf8InPlace(currentValue->String, s);
                 }
             }
@@ -206,9 +206,9 @@ public sealed unsafe partial class Plugin
 
             if (Configuration.DebugMode)
             {
-                var curType = currentValue != null ? currentValue->Type.ToString() : "n/a";
-                var afterCurrentUInt = (currentValue != null && currentValue->Type == AtkValueType.UInt) ? currentValue->UInt : 0U;
-                var afterCurrentStr = (currentValue != null && currentValue->Type is AtkValueType.String or AtkValueType.ManagedString or AtkValueType.ConstString)
+                string curType = currentValue != null ? currentValue->Type.ToString() : "n/a";
+                uint afterCurrentUInt = (currentValue != null && currentValue->Type == AtkValueType.UInt) ? currentValue->UInt : 0U;
+                string afterCurrentStr = (currentValue != null && currentValue->Type is AtkValueType.String or AtkValueType.ManagedString or AtkValueType.ConstString)
                     ? AtkValueHelpers.ReadAtkValueString(*currentValue)
                     : string.Empty;
                 Svc.Log.Information($"[QuickTransfer] InputNumeric(Update): prompt='{prompt}', min={min}, max={max}, default {beforeDefault}->{defaultValue->UInt}, currentUInt {beforeCurrentUInt}->{afterCurrentUInt}, currentStr '{beforeCurrentStr}'->'{afterCurrentStr}' (idx5 type {curType})");
@@ -232,11 +232,11 @@ public sealed unsafe partial class Plugin
             if (inputNumeric->UldManager.NodeList == null)
                 return;
 
-            var desiredStr = desired.ToString();
+            string desiredStr = desired.ToString();
 
-            for (var i = 0; i < inputNumeric->UldManager.NodeListCount; i++)
+            for(int i = 0; i < inputNumeric->UldManager.NodeListCount; i++)
             {
-                var node = inputNumeric->UldManager.NodeList[i];
+                AtkResNode* node = inputNumeric->UldManager.NodeList[i];
                 if (node == null)
                     continue;
 
@@ -244,7 +244,7 @@ public sealed unsafe partial class Plugin
                     continue;
 
                 AtkComponentNode* compNode = (AtkComponentNode*)node;
-                var comp = compNode->Component;
+                AtkComponentBase* comp = compNode->Component;
                 if (comp == null)
                     continue;
 

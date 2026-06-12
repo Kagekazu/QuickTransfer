@@ -31,10 +31,10 @@ internal static partial class CursorHoverHelpers
         y = 0;
         try
         {
-            if (!GetCursorPos(out var p))
+            if (!GetCursorPos(out Point p))
                 return false;
 
-            var hwnd = Process.GetCurrentProcess().MainWindowHandle;
+            nint hwnd = Process.GetCurrentProcess().MainWindowHandle;
             if (hwnd == nint.Zero)
                 return false;
 
