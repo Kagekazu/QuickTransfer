@@ -2,6 +2,8 @@
     <PropertyGroup>
         <Authors>flick, Kagekazu</Authors>
         <Version>1.1.0.2</Version>
+        <Platforms>x64</Platforms>
+        <PlatformTarget>x64</PlatformTarget>
         <ImplicitUsings>enable</ImplicitUsings>
     </PropertyGroup>
 
