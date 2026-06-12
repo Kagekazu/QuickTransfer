@@ -41,8 +41,8 @@ jobs:
       - name: Restore
         run: dotnet restore
 
-      - name: Build (Release)
-        run: dotnet build QuickTransfer.slnx -c Release --no-restore
+      - name: Build (Release | x64)
+        run: dotnet build QuickTransfer.slnx -c Release -p:Platform=x64 --no-restore
 
       - name: Prepare release zip
         shell: pwsh
