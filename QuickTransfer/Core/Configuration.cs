@@ -39,7 +39,9 @@ public sealed class Configuration : IPluginConfiguration
     public void PersistIfDirty()
     {
         if (!_pendingPersist)
+        {
             return;
+        }
 
         WriteToDisk();
         _pendingPersist = false;

@@ -33,7 +33,7 @@ internal static unsafe class ContextMenuHandler
 
     public static bool ContextLabelMatches(AutoContextAction desiredAction, string menuText)
     {
-        string t = menuText.Trim();
+        var t = menuText.Trim();
         static bool Has(string s, string needle) => s.Contains(needle, StringComparison.OrdinalIgnoreCase);
 
         return desiredAction switch
@@ -106,9 +106,11 @@ internal static unsafe class ContextMenuHandler
         AtkUnitBase* addon = null;
         try
         {
-            uint agentAddonId = agent->AgentInterface.GetAddonId();
+            var agentAddonId = agent->AgentInterface.GetAddonId();
             if (agentAddonId != 0)
+            {
                 addon = AddonHelpers.GetAddonById(agentAddonId);
+            }
         }
         catch
         {
@@ -116,7 +118,9 @@ internal static unsafe class ContextMenuHandler
         }
 
         if (addon == null)
+        {
             addon = AddonHelpers.GetAddonByName(QuickTransferConstants.ContextMenuAddonName);
+        }
         return addon != null && TryAutoSelectAndClose(
             agent,
             addon,
@@ -131,10 +135,10 @@ internal static unsafe class ContextMenuHandler
     {
         try
         {
-            uint agentAddonId = agent->AgentInterface.GetAddonId();
+            var agentAddonId = agent->AgentInterface.GetAddonId();
             if (agentAddonId != 0)
             {
-                AtkUnitBase* addon = AddonHelpers.GetAddonById(agentAddonId);
+                var addon = AddonHelpers.GetAddonById(agentAddonId);
                 if (addon != null)
                 {
                     CloseContextMenuAddon(agent, addon);
@@ -149,9 +153,11 @@ internal static unsafe class ContextMenuHandler
 
         try
         {
-            AtkUnitBase* cm = AddonHelpers.GetAddonByName(QuickTransferConstants.ContextMenuAddonName);
+            var cm = AddonHelpers.GetAddonByName(QuickTransferConstants.ContextMenuAddonName);
             if (cm != null)
+            {
                 CloseContextMenuAddon(agent, cm);
+            }
         }
         catch
         {
@@ -186,21 +192,25 @@ internal static unsafe class ContextMenuHandler
         chosenIndex = -1;
 
         // Single-pass: decode each label once, record first match per action.
-        bool foundAny = false;
+        var foundAny = false;
 
         int removeIdx = -1, addIdx = -1, placeIdx = -1, returnIdx = -1, entrustIdx = -1, retrieveIdx = -1, companyRemoveIdx = -1, splitIdx = -1, tradeIdx = -1, sellIdx = -1;
         string? removeTxt = null, addTxt = null, placeTxt = null, returnTxt = null, entrustTxt = null, retrieveTxt = null, companyRemoveTxt = null, splitTxt = null, tradeTxt = null, sellTxt = null;
 
-        int max = Math.Min(agent->ContextItemCount, 64);
-        for(int i = 0; i < max; i++)
+        var max = Math.Min(agent->ContextItemCount, 64);
+        for (var i = 0; i < max; i++)
         {
-            AtkValue param = agent->EventParams[agent->ContexItemStartIndex + i];
+            var param = agent->EventParams[agent->ContexItemStartIndex + i];
             if (param.Type is not (AtkValueType.String or AtkValueType.ManagedString))
+            {
                 continue;
+            }
 
-            string text = AtkValueHelpers.ReadAtkValueString(param);
+            var text = AtkValueHelpers.ReadAtkValueString(param);
             if (string.IsNullOrWhiteSpace(text))
+            {
                 continue;
+            }
 
             foundAny = true;
 
@@ -275,13 +285,15 @@ internal static unsafe class ContextMenuHandler
         }
 
         if (!foundAny)
+        {
             return false;
+        }
 
-        bool saddlebagOpen = InventoryHelpers.IsSaddlebagOpen();
-        bool retainerOpen = InventoryHelpers.IsRetainerOpen();
-        bool companyChestOpen = InventoryHelpers.IsCompanyChestOpen();
-        bool tradeOpen = InventoryHelpers.IsTradeOpen();
-        bool vendorOpen = InventoryHelpers.IsVendorOpen();
+        var saddlebagOpen = InventoryHelpers.IsSaddlebagOpen();
+        var retainerOpen = InventoryHelpers.IsRetainerOpen();
+        var companyChestOpen = InventoryHelpers.IsCompanyChestOpen();
+        var tradeOpen = InventoryHelpers.IsTradeOpen();
+        var vendorOpen = InventoryHelpers.IsVendorOpen();
 
         // Choose the best action that exists in the menu.
         (int idx, string? txt) chosen;
@@ -346,7 +358,9 @@ internal static unsafe class ContextMenuHandler
         }
 
         if (chosen.idx < 0 || string.IsNullOrWhiteSpace(chosen.txt))
+        {
             return false;
+        }
 
         AtkValueHelpers.GenerateCallback(contextMenuAddon, 0, chosen.idx, 0U, 0, 0);
 
@@ -373,18 +387,22 @@ internal static unsafe class ContextMenuHandler
         chosenText = string.Empty;
         chosenIndex = -1;
 
-        int undoSortIdx = -1;
+        var undoSortIdx = -1;
 
-        int max = Math.Min(agent->ContextItemCount, 64);
-        for(int i = 0; i < max; i++)
+        var max = Math.Min(agent->ContextItemCount, 64);
+        for (var i = 0; i < max; i++)
         {
-            AtkValue param = agent->EventParams[agent->ContexItemStartIndex + i];
+            var param = agent->EventParams[agent->ContexItemStartIndex + i];
             if (param.Type is not (AtkValueType.String or AtkValueType.ManagedString))
+            {
                 continue;
+            }
 
-            string text = AtkValueHelpers.ReadAtkValueString(param);
+            var text = AtkValueHelpers.ReadAtkValueString(param);
             if (string.IsNullOrWhiteSpace(text))
+            {
                 continue;
+            }
 
             // If Sort isn't present (because the container is already sorted), the menu often contains "Undo Sort" instead.
             // We treat that as "already sorted" and do nothing (closing the menu).
@@ -394,7 +412,9 @@ internal static unsafe class ContextMenuHandler
             }
 
             if (!ContextLabelMatches(AutoContextAction.Sort, text))
+            {
                 continue;
+            }
 
             AtkValueHelpers.GenerateCallback(contextMenuAddon, 0, i, 0U, 0, 0);
             CloseContextMenuAddon(agent, contextMenuAddon);
@@ -424,28 +444,40 @@ internal static unsafe class ContextMenuHandler
         try
         {
             if (ctxAddon == null || ctxAddon->AtkValues == null || ctxAddon->AtkValuesCount <= 0)
-                return false;
-
-            int count = Math.Min((int)ctxAddon->AtkValuesCount, 128);
-            if (debugMode)
-                Svc.Log.Information($"[QuickTransfer] ContextMenu AtkValuesCount={ctxAddon->AtkValuesCount} (scanning {count}).");
-            for(int i = 0; i < count; i++)
             {
-                AtkValue v = ctxAddon->AtkValues[i];
-                if (v.Type is not (AtkValueType.String or AtkValueType.ManagedString or AtkValueType.ConstString))
-                    continue;
+                return false;
+            }
 
-                string s = AtkValueHelpers.ReadAtkValueString(v);
-                if (string.IsNullOrWhiteSpace(s))
+            var count = Math.Min((int)ctxAddon->AtkValuesCount, 128);
+            if (debugMode)
+            {
+                Svc.Log.Information($"[QuickTransfer] ContextMenu AtkValuesCount={ctxAddon->AtkValuesCount} (scanning {count}).");
+            }
+            for (var i = 0; i < count; i++)
+            {
+                var v = ctxAddon->AtkValues[i];
+                if (v.Type is not (AtkValueType.String or AtkValueType.ManagedString or AtkValueType.ConstString))
+                {
                     continue;
+                }
+
+                var s = AtkValueHelpers.ReadAtkValueString(v);
+                if (string.IsNullOrWhiteSpace(s))
+                {
+                    continue;
+                }
 
                 if (debugMode)
+                {
                     Svc.Log.Information($"[QuickTransfer] ContextMenu AtkValue[{i}] = '{s}'");
+                }
 
                 if (s.Contains(needle, StringComparison.OrdinalIgnoreCase))
                 {
                     if (debugMode)
+                    {
                         Svc.Log.Information($"[QuickTransfer] ContextMenu contains '{needle}' (found '{s}' at AtkValue[{i}]).");
+                    }
                     return true;
                 }
             }
@@ -462,21 +494,25 @@ internal static unsafe class ContextMenuHandler
     {
         try
         {
-            int max = Math.Min(Math.Min(agent->ContextItemCount, 64), maxItems);
-            for(int i = 0; i < max; i++)
+            var max = Math.Min(Math.Min(agent->ContextItemCount, 64), maxItems);
+            for (var i = 0; i < max; i++)
             {
-                AtkValue param = agent->EventParams[agent->ContexItemStartIndex + i];
+                var param = agent->EventParams[agent->ContexItemStartIndex + i];
                 if (param.Type is not (AtkValueType.String or AtkValueType.ManagedString))
+                {
                     continue;
+                }
 
-                string text = AtkValueHelpers.ReadAtkValueString(param);
+                var text = AtkValueHelpers.ReadAtkValueString(param);
                 if (string.IsNullOrWhiteSpace(text))
+                {
                     continue;
+                }
 
                 Svc.Log.Information($"[QuickTransfer] Menu idx={i}: '{text}'");
             }
         }
-        catch(Exception ex)
+        catch (Exception ex)
         {
             Svc.Log.Warning(ex, "[QuickTransfer] Failed to dump context menu.");
         }

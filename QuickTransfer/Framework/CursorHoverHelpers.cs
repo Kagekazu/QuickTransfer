@@ -31,18 +31,26 @@ internal static partial class CursorHoverHelpers
         y = 0;
         try
         {
-            if (!GetCursorPos(out Point p))
+            if (!GetCursorPos(out var p))
+            {
                 return false;
+            }
 
-            nint hwnd = Process.GetCurrentProcess().MainWindowHandle;
+            var hwnd = Process.GetCurrentProcess().MainWindowHandle;
             if (hwnd == nint.Zero)
+            {
                 return false;
+            }
 
             if (!ScreenToClient(hwnd, ref p))
+            {
                 return false;
+            }
 
             if (p.X < short.MinValue || p.X > short.MaxValue || p.Y < short.MinValue || p.Y > short.MaxValue)
+            {
                 return false;
+            }
 
             x = (short)p.X;
             y = (short)p.Y;

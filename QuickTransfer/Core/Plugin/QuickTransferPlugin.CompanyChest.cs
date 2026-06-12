@@ -2,7 +2,6 @@
 using FFXIVClientStructs.FFXIV.Client.Game;
 using FFXIVClientStructs.FFXIV.Client.UI;
 using FFXIVClientStructs.FFXIV.Component.GUI;
-using InteropGenerator.Runtime;
 using System.Runtime.InteropServices;
 using AtkValueType = FFXIVClientStructs.FFXIV.Component.GUI.AtkValueType;
 
@@ -21,10 +20,14 @@ public sealed unsafe partial class QuickTransferPlugin
         try
         {
             if (inv == null)
+            {
                 return;
-            InventoryItem* it = inv->GetInventorySlot(type, (int)slot);
+            }
+            var it = inv->GetInventorySlot(type, (int)slot);
             if (it == null)
+            {
                 return;
+            }
             itemId = it->ItemId;
             qty = it->Quantity;
         }
@@ -37,7 +40,7 @@ public sealed unsafe partial class QuickTransferPlugin
     {
         // Don't hardcode enum names; discover them by name at runtime so we don't break across patches/structs.
         // Limit to the configured number of item compartments (default 3; can be upgraded to 5).
-        int max = Math.Clamp(Configuration.CompanyChestCompartments, 3, 5);
+        var max = Math.Clamp(Configuration.CompanyChestCompartments, 3, 5);
         return
         [
             .. Enum.GetValues<InventoryType>()
@@ -62,32 +65,40 @@ public sealed unsafe partial class QuickTransferPlugin
         try
         {
             if (addon == null)
+            {
                 return false;
+            }
 
             // Scan component nodes for any DragDrop/List that yields a FreeCompanyPageX payload.
-            ushort nodeCount = addon->UldManager.NodeListCount;
+            var nodeCount = addon->UldManager.NodeListCount;
             if (nodeCount <= 0)
+            {
                 return false;
+            }
 
-            int maxNodes = Math.Min((int)nodeCount, 2000);
+            var maxNodes = Math.Min((int)nodeCount, 2000);
             InventoryType bestPage = default;
-            int bestHits = 0;
+            var bestHits = 0;
 
             // Track the most frequently observed FreeCompanyPageX among *visible* nodes.
             // Rationale: the FC chest addon often keeps nodes for other tabs alive but hidden; a "first match wins"
             // scan can return the wrong tab (observed off-by-one behavior).
-            Dictionary<InventoryType, int> hitsByPage = new(8);
-            for(int i = 0; i < maxNodes; i++)
+            Dictionary<InventoryType, int> hitsByPage = [];
+            for (var i = 0; i < maxNodes; i++)
             {
-                AtkResNode* n = addon->UldManager.NodeList[i];
+                var n = addon->UldManager.NodeList[i];
                 if (n == null)
+                {
                     continue;
+                }
 
                 // Skip hidden nodes (inactive tabs commonly force alpha to 0).
                 try
                 {
                     if (n->Alpha_2 == 0 || n->Color.A == 0)
+                    {
                         continue;
+                    }
                 }
                 catch
                 {
@@ -98,26 +109,30 @@ public sealed unsafe partial class QuickTransferPlugin
                 try { compNode = n->GetAsAtkComponentNode(); }
                 catch { continue; }
                 if (compNode == null || compNode->Component == null)
+                {
                     continue;
+                }
 
-                AtkComponentBase* component = compNode->Component;
-                ComponentType ct = component->GetComponentType();
+                var component = compNode->Component;
+                var ct = component->GetComponentType();
                 if (ct == ComponentType.List)
                 {
-                    AtkComponentList* list = (AtkComponentList*)component;
+                    var list = (AtkComponentList*)component;
                     // Try a few indices; FC chest lists usually expose items here.
-                    int observed = 0;
-                    for(int li = 0; li < 30; li++)
+                    var observed = 0;
+                    for (var li = 0; li < 30; li++)
                     {
-                        AtkDragDropInterface* ddi = DragDropHelpers.TryGetDdiFromListIndex(list, li);
+                        var ddi = DragDropHelpers.TryGetDdiFromListIndex(list, li);
                         if (ddi == null || (nint)ddi < QuickTransferConstants.MinLikelyPointer)
+                        {
                             continue;
+                        }
 
-                        if (DragDropHelpers.TryGetSlotFromDragDropInterface(ddi, out InventoryType invType, out int _))
+                        if (DragDropHelpers.TryGetSlotFromDragDropInterface(ddi, out var invType, out var _))
                         {
                             if (InventoryHelpers.IsCompanyChestDestinationType(invType))
                             {
-                                hitsByPage.TryGetValue(invType, out int cur);
+                                hitsByPage.TryGetValue(invType, out var cur);
                                 cur++;
                                 hitsByPage[invType] = cur;
                                 if (cur > bestHits)
@@ -129,22 +144,26 @@ public sealed unsafe partial class QuickTransferPlugin
                                 // Don't over-scan; we just need enough evidence to pick the visible page.
                                 observed++;
                                 if (observed >= 6)
+                                {
                                     break;
+                                }
                             }
                         }
                     }
                 }
                 else
                 {
-                    AtkDragDropInterface* ddi = DragDropHelpers.TryGetDdiFromComponent(component);
+                    var ddi = DragDropHelpers.TryGetDdiFromComponent(component);
                     if (ddi == null || (nint)ddi < QuickTransferConstants.MinLikelyPointer)
+                    {
                         continue;
+                    }
 
-                    if (DragDropHelpers.TryGetSlotFromDragDropInterface(ddi, out InventoryType invType, out int _))
+                    if (DragDropHelpers.TryGetSlotFromDragDropInterface(ddi, out var invType, out var _))
                     {
                         if (InventoryHelpers.IsCompanyChestDestinationType(invType))
                         {
-                            hitsByPage.TryGetValue(invType, out int cur);
+                            hitsByPage.TryGetValue(invType, out var cur);
                             cur++;
                             hitsByPage[invType] = cur;
                             if (cur > bestHits)
@@ -176,29 +195,35 @@ public sealed unsafe partial class QuickTransferPlugin
         try
         {
             if (addon == null || addon->AtkValues == null || addon->AtkValuesCount <= 0)
-                return;
-
-            AtkValue* values = addon->AtkValues;
-            int count = addon->AtkValuesCount;
-            int max = Math.Min(count, 80);
-
-            for(int i = 0; i < max; i++)
             {
-                if (!AtkValueHelpers.TryGetAtkValueInt(values, max, i, out int n))
+                return;
+            }
+
+            var values = addon->AtkValues;
+            int count = addon->AtkValuesCount;
+            var max = Math.Min(count, 80);
+
+            for (var i = 0; i < max; i++)
+            {
+                if (!AtkValueHelpers.TryGetAtkValueInt(values, max, i, out var n))
+                {
                     continue;
+                }
 
                 // Only small integers are plausible "tab indices".
                 if (n is < 0 or > 10)
-                    continue;
-
-                if (!companyChestSelectedTabCandidates.TryGetValue(i, out Dictionary<int, InventoryType>? map))
                 {
-                    map = new(8);
+                    continue;
+                }
+
+                if (!companyChestSelectedTabCandidates.TryGetValue(i, out var map))
+                {
+                    map = [];
                     companyChestSelectedTabCandidates[i] = map;
                 }
 
                 // If we see conflicting mappings for the same (index,value), drop this candidate index.
-                if (map.TryGetValue(n, out InventoryType existing) && existing != selectedPage)
+                if (map.TryGetValue(n, out var existing) && existing != selectedPage)
                 {
                     companyChestSelectedTabCandidates.Remove(i);
                     continue;
@@ -208,11 +233,11 @@ public sealed unsafe partial class QuickTransferPlugin
             }
 
             // Pick the best candidate index (most distinct pages mapped).
-            int bestIdx = -1;
-            int bestDistinct = 0;
-            foreach(KeyValuePair<int, Dictionary<int, InventoryType>> kv in companyChestSelectedTabCandidates)
+            var bestIdx = -1;
+            var bestDistinct = 0;
+            foreach (var kv in companyChestSelectedTabCandidates)
             {
-                int distinct = kv.Value.Values.Distinct().Count();
+                var distinct = kv.Value.Values.Distinct().Count();
                 if (distinct > bestDistinct)
                 {
                     bestDistinct = distinct;
@@ -226,7 +251,9 @@ public sealed unsafe partial class QuickTransferPlugin
                 {
                     companyChestSelectedTabAtkValueIndex = bestIdx;
                     if (Configuration.DebugMode)
+                    {
                         Svc.Log.Information($"[QuickTransfer] FC Chest AtkValues selected-tab index inferred: idx={bestIdx} (mappedPages={bestDistinct}).");
+                    }
                 }
             }
         }
@@ -242,25 +269,39 @@ public sealed unsafe partial class QuickTransferPlugin
         try
         {
             if (companyChestSelectedTabAtkValueIndex < 0)
+            {
                 return false;
+            }
 
-            if (!InventoryHelpers.TryGetVisibleAddon(QuickTransferConstants.FreeCompanyChestAddonName, out AtkUnitBase* addon, QuickTransferConstants.WideAddonSearchMaxIndex) || addon == null || addon->Id != addonId)
+            if (!InventoryHelpers.TryGetVisibleAddon(QuickTransferConstants.FreeCompanyChestAddonName, out var addon, QuickTransferConstants.WideAddonSearchMaxIndex) || addon == null || addon->Id != addonId)
+            {
                 return false;
+            }
 
             if (addon->AtkValues == null || addon->AtkValuesCount <= 0)
+            {
                 return false;
+            }
 
-            if (!companyChestSelectedTabCandidates.TryGetValue(companyChestSelectedTabAtkValueIndex, out Dictionary<int, InventoryType>? map) || map.Count == 0)
+            if (!companyChestSelectedTabCandidates.TryGetValue(companyChestSelectedTabAtkValueIndex, out var map) || map.Count == 0)
+            {
                 return false;
+            }
 
-            if (!AtkValueHelpers.TryGetAtkValueInt(addon->AtkValues, addon->AtkValuesCount, companyChestSelectedTabAtkValueIndex, out int n))
+            if (!AtkValueHelpers.TryGetAtkValueInt(addon->AtkValues, addon->AtkValuesCount, companyChestSelectedTabAtkValueIndex, out var n))
+            {
                 return false;
+            }
 
-            if (!map.TryGetValue(n, out InventoryType p))
+            if (!map.TryGetValue(n, out var p))
+            {
                 return false;
+            }
 
             if (!InventoryHelpers.IsCompanyChestDestinationType(p))
+            {
                 return false;
+            }
 
             page = p;
             return true;
@@ -276,34 +317,36 @@ public sealed unsafe partial class QuickTransferPlugin
         page = default;
         try
         {
-            if (!InventoryHelpers.TryGetVisibleAddon(QuickTransferConstants.FreeCompanyChestAddonName, out AtkUnitBase* fcc, QuickTransferConstants.WideAddonSearchMaxIndex) || fcc == null)
+            if (!InventoryHelpers.TryGetVisibleAddon(QuickTransferConstants.FreeCompanyChestAddonName, out var fcc, QuickTransferConstants.WideAddonSearchMaxIndex) || fcc == null)
+            {
                 return false;
+            }
 
             uint addonId = fcc->Id;
             const long companyChestTabMaxAgeMs = 180000; // 3 minutes
 
             // Prefer the page currently displayed in the addon (visible drag-drop payloads).
-            if (TryResolveCompanyChestPageFromAddon(fcc, out InventoryType curPage) && InventoryHelpers.IsCompanyChestDestinationType(curPage))
+            if (TryResolveCompanyChestPageFromAddon(fcc, out var curPage) && InventoryHelpers.IsCompanyChestDestinationType(curPage))
             {
                 page = curPage;
                 return true;
             }
 
-            (InventoryType Page, uint AddonId, long SeenAtMs)? lp = lastHoverCompanyChestPage;
+            var lp = lastHoverCompanyChestPage;
             if (lp != null && lp.Value.AddonId == addonId && now - lp.Value.SeenAtMs <= companyChestTabMaxAgeMs && InventoryHelpers.IsCompanyChestDestinationType(lp.Value.Page))
             {
                 page = lp.Value.Page;
                 return true;
             }
 
-            (InventoryType Page, uint AddonId, long SeenAtMs)? sp = lastSelectedCompanyChestPage;
+            var sp = lastSelectedCompanyChestPage;
             if (sp != null && sp.Value.AddonId == addonId && now - sp.Value.SeenAtMs <= companyChestTabMaxAgeMs && InventoryHelpers.IsCompanyChestDestinationType(sp.Value.Page))
             {
                 page = sp.Value.Page;
                 return true;
             }
 
-            if (TryResolveCompanyChestSelectedPageFromAtkValues(addonId, out InventoryType atkPage) && InventoryHelpers.IsCompanyChestDestinationType(atkPage))
+            if (TryResolveCompanyChestSelectedPageFromAtkValues(addonId, out var atkPage) && InventoryHelpers.IsCompanyChestDestinationType(atkPage))
             {
                 page = atkPage;
                 return true;
@@ -321,15 +364,21 @@ public sealed unsafe partial class QuickTransferPlugin
         try
         {
             if (!Configuration.EnableCompanyChest)
+            {
                 return;
+            }
 
             // Only care while FC chest features are active; avoid doing extra work on every chat line.
             if (!companyChestOrganize.Active && !companyChestDeposit.Active)
+            {
                 return;
+            }
 
-            string text = message.Sender.TextValue;
+            var text = message.Sender.TextValue;
             if (text.Length == 0)
+            {
                 return;
+            }
 
             // These strings appear as system error toasts and (typically) also in the log/chat.
             // If we see them, stop the state machine and back off for a few seconds.
@@ -337,7 +386,7 @@ public sealed unsafe partial class QuickTransferPlugin
                 text.Contains("Unable to store item", StringComparison.OrdinalIgnoreCase) ||
                 text.Contains("Unable to complete company chest action", StringComparison.OrdinalIgnoreCase))
             {
-                long now = Environment.TickCount64;
+                var now = Environment.TickCount64;
                 companyChestBusyHits = Math.Min(companyChestBusyHits + 1, 10);
                 long backoffMs = Math.Min(60000, 5000 * (1 << Math.Min(companyChestBusyHits - 1, 4))); // 5s,10s,20s,40s,60s cap
                 companyChestBusyUntilMs = Math.Max(companyChestBusyUntilMs, now + backoffMs);
@@ -347,7 +396,9 @@ public sealed unsafe partial class QuickTransferPlugin
                 {
                     companyChestOrganize.Active = false;
                     if (Configuration.DebugMode)
+                    {
                         Svc.Log.Information($"[QuickTransfer] (MMB) FC Chest busy hit {companyChestBusyHits}; stopping organize run. msg='{text}'");
+                    }
                 }
                 else if (companyChestOrganize.Active)
                 {
@@ -370,7 +421,9 @@ public sealed unsafe partial class QuickTransferPlugin
                 pendingCompanyChestNumericValueSetAtMs = 0;
 
                 if (Configuration.DebugMode)
+                {
                     Svc.Log.Information($"[QuickTransfer] (MMB) FC Chest busy detected from chat; backoff={backoffMs}ms (hit {companyChestBusyHits}). msg='{text}'");
+                }
             }
         }
         catch
@@ -383,22 +436,34 @@ public sealed unsafe partial class QuickTransferPlugin
         try
         {
             if (!Configuration.EnableCompanyChest)
+            {
                 return false;
+            }
             if (RaptureAtkModule.Instance() == null)
+            {
                 return false;
+            }
             if (!InventoryHelpers.IsCompanyChestOpen())
+            {
                 return false;
+            }
             if (!InventoryHelpers.IsCompanyChestDepositSourceType(sourceType))
+            {
                 return false;
+            }
 
-            if (!InventoryHelpers.TryGetItemInfo(sourceType, (int)sourceSlot, out uint itemId, out bool isHq, out uint qty))
+            if (!InventoryHelpers.TryGetItemInfo(sourceType, (int)sourceSlot, out var itemId, out var isHq, out var qty))
+            {
                 return false;
+            }
 
-            long now = Environment.TickCount64;
-            if (!TryResolveCompanyChestActivePage(now, out InventoryType destPage))
+            var now = Environment.TickCount64;
+            if (!TryResolveCompanyChestActivePage(now, out var destPage))
             {
                 if (Configuration.DebugMode)
+                {
                     Svc.Log.Information("[QuickTransfer] (Shift+RClick) Company Chest deposit skipped: could not determine active tab.");
+                }
                 return false;
             }
 
@@ -427,7 +492,9 @@ public sealed unsafe partial class QuickTransferPlugin
     private void ProcessCompanyChestDeposit(long now)
     {
         if (!companyChestDeposit.Active)
+        {
             return;
+        }
 
         // Stop if conditions no longer apply.
         if (!Configuration.EnableCompanyChest || RaptureAtkModule.Instance() == null || !InventoryHelpers.IsCompanyChestOpen())
@@ -446,10 +513,12 @@ public sealed unsafe partial class QuickTransferPlugin
         // This prevents spamming the same move over and over when the game hasn't applied it yet.
         if (companyChestDeposit.WaitForQtyChangeUntilMs > 0 && now <= companyChestDeposit.WaitForQtyChangeUntilMs)
         {
-            if (InventoryHelpers.TryGetVisibleAddon(QuickTransferConstants.InputNumericAddonName, out AtkUnitBase* _))
+            if (InventoryHelpers.TryGetVisibleAddon(QuickTransferConstants.InputNumericAddonName, out var _))
+            {
                 return;
+            }
 
-            if (InventoryHelpers.TryGetItemInfo(companyChestDeposit.SourceType, (int)companyChestDeposit.SourceSlot, out uint _, out bool _, out uint qNow) &&
+            if (InventoryHelpers.TryGetItemInfo(companyChestDeposit.SourceType, (int)companyChestDeposit.SourceSlot, out var _, out var _, out var qNow) &&
                 qNow != companyChestDeposit.LastQty)
             {
                 companyChestDeposit.LastQty = qNow;
@@ -462,13 +531,17 @@ public sealed unsafe partial class QuickTransferPlugin
         }
 
         // Don't issue a new move while the quantity dialog is open.
-        if (InventoryHelpers.TryGetVisibleAddon(QuickTransferConstants.InputNumericAddonName, out AtkUnitBase* _))
+        if (InventoryHelpers.TryGetVisibleAddon(QuickTransferConstants.InputNumericAddonName, out var _))
+        {
             return;
+        }
 
         if (now < companyChestDeposit.NextAttemptAtMs)
+        {
             return;
+        }
 
-        if (!InventoryHelpers.TryGetItemInfo(companyChestDeposit.SourceType, (int)companyChestDeposit.SourceSlot, out uint itemId, out bool isHq, out uint qty) ||
+        if (!InventoryHelpers.TryGetItemInfo(companyChestDeposit.SourceType, (int)companyChestDeposit.SourceSlot, out var itemId, out var isHq, out var qty) ||
             itemId == 0 ||
             qty == 0)
         {
@@ -485,7 +558,7 @@ public sealed unsafe partial class QuickTransferPlugin
 
         InventoryType[] pages = companyChestDeposit.DestPage != default && InventoryHelpers.IsCompanyChestDestinationType(companyChestDeposit.DestPage)
             ? [companyChestDeposit.DestPage]
-            : TryResolveCompanyChestActivePage(now, out InventoryType activePage) && InventoryHelpers.IsCompanyChestDestinationType(activePage)
+            : TryResolveCompanyChestActivePage(now, out var activePage) && InventoryHelpers.IsCompanyChestDestinationType(activePage)
                 ? [companyChestDeposit.DestPage = activePage]
                 : [];
         if (pages.Length == 0)
@@ -494,8 +567,8 @@ public sealed unsafe partial class QuickTransferPlugin
             return;
         }
 
-        uint maxStack = InventoryHelpers.GetItemStackSize(itemId);
-        bool needsQuantityConfirm = qty > 1 && maxStack > 1;
+        var maxStack = InventoryHelpers.GetItemStackSize(itemId);
+        var needsQuantityConfirm = qty > 1 && maxStack > 1;
 
         InventoryType destType;
         uint destSlot;
@@ -545,42 +618,54 @@ public sealed unsafe partial class QuickTransferPlugin
         }
 
         if (Configuration.DebugMode)
+        {
             Svc.Log.Information($"[QuickTransfer] (Shift+RClick) Company Chest deposit step {companyChestDeposit.Steps}: {companyChestDeposit.SourceType} slot={companyChestDeposit.SourceSlot} -> {destType} slot={destSlot} (page={companyChestDeposit.DestPage}, qty={qty}, stackMax={maxStack}).");
+        }
     }
 
     private void StartCompanyChestOrganize(long now)
     {
         if (!Configuration.EnableCompanyChest || !InventoryHelpers.IsCompanyChestOpen() || RaptureAtkModule.Instance() == null)
+        {
             return;
+        }
 
         if (now <= companyChestBusyUntilMs)
+        {
             return;
+        }
 
         if (companyChestOrganize.Active && now < companyChestOrganize.ExpiresAtMs)
         {
             // Already running; don't reset progress on repeated MMB presses.
             companyChestOrganize.ExpiresAtMs = Math.Max(companyChestOrganize.ExpiresAtMs, now + 20000);
             if (Configuration.DebugMode)
+            {
                 Svc.Log.Information("[QuickTransfer] (MMB) Company Chest organize already running; ignoring restart.");
+            }
             return;
         }
 
         companyChestBusyHits = 0;
 
-        uint ownerAddonId = 0u;
+        var ownerAddonId = 0u;
         try
         {
-            if (InventoryHelpers.TryGetVisibleAddon(QuickTransferConstants.FreeCompanyChestAddonName, out AtkUnitBase* fcc, QuickTransferConstants.WideAddonSearchMaxIndex) && fcc != null)
+            if (InventoryHelpers.TryGetVisibleAddon(QuickTransferConstants.FreeCompanyChestAddonName, out var fcc, QuickTransferConstants.WideAddonSearchMaxIndex) && fcc != null)
+            {
                 ownerAddonId = fcc->Id;
+            }
         }
         catch
         {
             // ignore
         }
 
-        InventoryType[] pages = GetCompanyChestInventoryTypes();
+        var pages = GetCompanyChestInventoryTypes();
         if (pages.Length == 0)
+        {
             return;
+        }
 
         companyChestOrganize = new()
         {
@@ -598,7 +683,9 @@ public sealed unsafe partial class QuickTransferPlugin
         };
 
         if (Configuration.DebugMode)
+        {
             Svc.Log.Information($"[QuickTransfer] (MMB) Company Chest organize started (pages=[{string.Join(", ", pages)}]).");
+        }
     }
 
     private void StartCompanyChestOrganize(long now, InventoryType selectedPage)
@@ -610,10 +697,14 @@ public sealed unsafe partial class QuickTransferPlugin
         }
 
         if (!Configuration.EnableCompanyChest || !InventoryHelpers.IsCompanyChestOpen() || RaptureAtkModule.Instance() == null)
+        {
             return;
+        }
 
         if (now <= companyChestBusyUntilMs)
+        {
             return;
+        }
 
         if (companyChestOrganize.Active && now < companyChestOrganize.ExpiresAtMs)
         {
@@ -627,18 +718,22 @@ public sealed unsafe partial class QuickTransferPlugin
                 // Same tab: extend expiry but don't reset progress.
                 companyChestOrganize.ExpiresAtMs = Math.Max(companyChestOrganize.ExpiresAtMs, now + 20000);
                 if (Configuration.DebugMode)
+                {
                     Svc.Log.Information("[QuickTransfer] (MMB) Company Chest organize already running; ignoring restart.");
+                }
                 return;
             }
         }
 
         companyChestBusyHits = 0;
 
-        uint ownerAddonId = 0u;
+        var ownerAddonId = 0u;
         try
         {
-            if (InventoryHelpers.TryGetVisibleAddon(QuickTransferConstants.FreeCompanyChestAddonName, out AtkUnitBase* fcc, QuickTransferConstants.WideAddonSearchMaxIndex) && fcc != null)
+            if (InventoryHelpers.TryGetVisibleAddon(QuickTransferConstants.FreeCompanyChestAddonName, out var fcc, QuickTransferConstants.WideAddonSearchMaxIndex) && fcc != null)
+            {
                 ownerAddonId = fcc->Id;
+            }
         }
         catch
         {
@@ -661,7 +756,9 @@ public sealed unsafe partial class QuickTransferPlugin
         };
 
         if (Configuration.DebugMode)
+        {
             Svc.Log.Information($"[QuickTransfer] (MMB) Company Chest organize started (selectedPage={selectedPage}).");
+        }
     }
 
     private void ProcessCompanyChestOrganize(long now)
@@ -669,7 +766,9 @@ public sealed unsafe partial class QuickTransferPlugin
         void LogSkip(string reason)
         {
             if (!Configuration.DebugMode)
+            {
                 return;
+            }
 
             // Rate-limit skip logs; only log when the reason changes or every 2s.
             if (!string.Equals(lastCompanyChestOrganizeSkipReason, reason, StringComparison.Ordinal) ||
@@ -684,7 +783,7 @@ public sealed unsafe partial class QuickTransferPlugin
         (int stepDelayMs, int stabilizeMs, int applyTimeoutMs, int noApplyBackoffMs, int pageRetryMs, int numericStepDelayMs, int numericApplyTimeoutMs) GetTimings()
         {
             // Start fast, but if the server begins rejecting actions (busyHits>0), automatically slow down.
-            int tier = Math.Clamp(companyChestBusyHits, 0, 2);
+            var tier = Math.Clamp(companyChestBusyHits, 0, 2);
             return tier switch
             {
                 0 => (750, 300, 1300, 650, 350, 1500, 3200),
@@ -694,7 +793,9 @@ public sealed unsafe partial class QuickTransferPlugin
         }
 
         if (!companyChestOrganize.Active)
+        {
             return;
+        }
 
         if (now <= companyChestBusyUntilMs)
         {
@@ -714,7 +815,7 @@ public sealed unsafe partial class QuickTransferPlugin
             return;
         }
 
-        if (InventoryHelpers.TryGetVisibleAddon(QuickTransferConstants.InputNumericAddonName, out AtkUnitBase* _))
+        if (InventoryHelpers.TryGetVisibleAddon(QuickTransferConstants.InputNumericAddonName, out var _))
         {
             LogSkip("InputNumeric visible");
             return;
@@ -723,12 +824,12 @@ public sealed unsafe partial class QuickTransferPlugin
         // If the selected page isn't loaded yet (loading spinner), wait.
         try
         {
-            InventoryType[] pages0 = companyChestOrganize.Pages;
-            InventoryManager* inv0 = InventoryManager.Instance();
+            var pages0 = companyChestOrganize.Pages;
+            var inv0 = InventoryManager.Instance();
             if (inv0 != null && pages0.Length > 0)
             {
-                bool allLoaded = true;
-                foreach(InventoryType p in pages0)
+                var allLoaded = true;
+                foreach (var p in pages0)
                 {
                     if (!InventoryHelpers.IsContainerLoaded(inv0, p))
                     {
@@ -747,7 +848,7 @@ public sealed unsafe partial class QuickTransferPlugin
 
                 if (!allLoaded)
                 {
-                    (int stepDelayMs, int stabilizeMs, int applyTimeoutMs, int noApplyBackoffMs, int pageRetryMs, int numericStepDelayMs, int numericApplyTimeoutMs) t = GetTimings();
+                    var t = GetTimings();
                     companyChestOrganize.NextAttemptAtMs = now + t.pageRetryMs;
                     LogSkip($"pages not ready yet; waiting. pages=[{string.Join(", ", pages0)}]");
                     return;
@@ -764,18 +865,18 @@ public sealed unsafe partial class QuickTransferPlugin
         {
             try
             {
-                InventoryManager* inv = InventoryManager.Instance();
+                var inv = InventoryManager.Instance();
                 if (inv != null)
                 {
-                    InventoryItem* s = inv->GetInventorySlot(companyChestOrganize.WaitSrcType, (int)companyChestOrganize.WaitSrcSlot);
-                    InventoryItem* d = inv->GetInventorySlot(companyChestOrganize.WaitDstType, (int)companyChestOrganize.WaitDstSlot);
+                    var s = inv->GetInventorySlot(companyChestOrganize.WaitSrcType, (int)companyChestOrganize.WaitSrcSlot);
+                    var d = inv->GetInventorySlot(companyChestOrganize.WaitDstType, (int)companyChestOrganize.WaitDstSlot);
 
-                    uint sId = s != null ? s->ItemId : 0u;
-                    int sQty = s != null ? s->Quantity : 0;
-                    uint dId = d != null ? d->ItemId : 0u;
-                    int dQty = d != null ? d->Quantity : 0;
+                    var sId = s != null ? s->ItemId : 0u;
+                    var sQty = s != null ? s->Quantity : 0;
+                    var dId = d != null ? d->ItemId : 0u;
+                    var dQty = d != null ? d->Quantity : 0;
 
-                    bool applied =
+                    var applied =
                         sId != companyChestOrganize.WaitSrcItemId ||
                         sQty != companyChestOrganize.WaitSrcQty ||
                         dId != companyChestOrganize.WaitDstItemId ||
@@ -783,7 +884,7 @@ public sealed unsafe partial class QuickTransferPlugin
 
                     if (applied)
                     {
-                        (int stepDelayMs, int stabilizeMs, int applyTimeoutMs, int noApplyBackoffMs, int pageRetryMs, int numericStepDelayMs, int numericApplyTimeoutMs) t = GetTimings();
+                        var t = GetTimings();
                         // We saw a change; wait a short stabilization window in case the server rejects and rolls back.
                         if (companyChestOrganize.WaitObservedChangeAtMs == 0)
                         {
@@ -814,10 +915,14 @@ public sealed unsafe partial class QuickTransferPlugin
                         companyChestOrganize.WaitObservedChangeAtMs = 0;
 
                         if (Configuration.DebugMode)
+                        {
                             Svc.Log.Information($"[QuickTransfer] (MMB) Company Chest move rolled back; treating as busy. backoff={backoffMs}ms (hit {companyChestBusyHits}).");
+                        }
 
                         if (companyChestBusyHits >= 3)
+                        {
                             companyChestOrganize.Active = false;
+                        }
                         return;
                     }
                     else if (now <= companyChestOrganize.WaitUntilMs)
@@ -846,7 +951,7 @@ public sealed unsafe partial class QuickTransferPlugin
                         }
 
                         // Back off a bit and retry.
-                        (int stepDelayMs, int stabilizeMs, int applyTimeoutMs, int noApplyBackoffMs, int pageRetryMs, int numericStepDelayMs, int numericApplyTimeoutMs) t = GetTimings();
+                        var t = GetTimings();
                         companyChestOrganize.NextAttemptAtMs = now + t.noApplyBackoffMs;
                         LogSkip("no apply observed; backoff");
                         return;
@@ -865,7 +970,7 @@ public sealed unsafe partial class QuickTransferPlugin
             return;
         }
 
-        InventoryType[] pages = companyChestOrganize.Pages;
+        var pages = companyChestOrganize.Pages;
         if (pages.Length == 0)
         {
             companyChestOrganize.Active = false;
@@ -875,16 +980,16 @@ public sealed unsafe partial class QuickTransferPlugin
         // Phase 0: merge stacks where possible. (Disabled for FC chest by starting at Phase=1.)
         if (companyChestOrganize.Phase == 0)
         {
-            if (TryFindCompanyChestMergeMove(pages, out InventoryType srcType, out uint srcSlot, out InventoryType dstType, out uint dstSlot, out bool needsNumeric))
+            if (TryFindCompanyChestMergeMove(pages, out var srcType, out var srcSlot, out var dstType, out var dstSlot, out var needsNumeric))
             {
                 // Snapshot BEFORE issuing the move (so we can detect when it applies).
-                uint preSrcId = 0u;
-                uint preDstId = 0u;
-                int preSrcQty = 0;
-                int preDstQty = 0;
+                var preSrcId = 0u;
+                var preDstId = 0u;
+                var preSrcQty = 0;
+                var preDstQty = 0;
                 try
                 {
-                    InventoryManager* inv = InventoryManager.Instance();
+                    var inv = InventoryManager.Instance();
                     if (inv != null)
                     {
                         TryGetSlotSnapshot(inv, srcType, srcSlot, out preSrcId, out preSrcQty);
@@ -911,7 +1016,7 @@ public sealed unsafe partial class QuickTransferPlugin
                 companyChestOrganize.WaitDstSlot = dstSlot;
                 companyChestOrganize.WaitDstItemId = preDstId;
                 companyChestOrganize.WaitDstQty = preDstQty;
-                (int stepDelayMs, int stabilizeMs, int applyTimeoutMs, int noApplyBackoffMs, int pageRetryMs, int numericStepDelayMs, int numericApplyTimeoutMs) t = GetTimings();
+                var t = GetTimings();
                 companyChestOrganize.WaitUntilMs = now + (needsNumeric ? t.numericApplyTimeoutMs : t.applyTimeoutMs);
                 companyChestOrganize.WaitObservedChangeAtMs = 0;
 
@@ -933,7 +1038,9 @@ public sealed unsafe partial class QuickTransferPlugin
                 }
 
                 if (Configuration.DebugMode)
+                {
                     Svc.Log.Information($"[QuickTransfer] (MMB) Company Chest organize step {companyChestOrganize.Steps}: {srcType} slot={srcSlot} -> {dstType} slot={dstSlot} (phase=stack, numeric={needsNumeric}).");
+                }
                 return;
             }
 
@@ -942,16 +1049,16 @@ public sealed unsafe partial class QuickTransferPlugin
         }
 
         // Phase 1: compact items to fill empty slots from the start.
-        if (TryFindCompanyChestCompactionMove(pages, out InventoryType cSrcType, out uint cSrcSlot, out InventoryType cDstType, out uint cDstSlot))
+        if (TryFindCompanyChestCompactionMove(pages, out var cSrcType, out var cSrcSlot, out var cDstType, out var cDstSlot))
         {
             // Snapshot BEFORE issuing the move (so we can detect when it applies).
-            uint preSrcId = 0u;
-            uint preDstId = 0u;
-            int preSrcQty = 0;
-            int preDstQty = 0;
+            var preSrcId = 0u;
+            var preDstId = 0u;
+            var preSrcQty = 0;
+            var preDstQty = 0;
             try
             {
-                InventoryManager* inv = InventoryManager.Instance();
+                var inv = InventoryManager.Instance();
                 if (inv != null)
                 {
                     TryGetSlotSnapshot(inv, cSrcType, cSrcSlot, out preSrcId, out preSrcQty);
@@ -978,7 +1085,7 @@ public sealed unsafe partial class QuickTransferPlugin
             companyChestOrganize.WaitDstSlot = cDstSlot;
             companyChestOrganize.WaitDstItemId = preDstId;
             companyChestOrganize.WaitDstQty = preDstQty;
-            (int stepDelayMs, int stabilizeMs, int applyTimeoutMs, int noApplyBackoffMs, int pageRetryMs, int numericStepDelayMs, int numericApplyTimeoutMs) t = GetTimings();
+            var t = GetTimings();
             companyChestOrganize.WaitUntilMs = now + t.applyTimeoutMs;
             companyChestOrganize.WaitObservedChangeAtMs = 0;
 
@@ -986,27 +1093,31 @@ public sealed unsafe partial class QuickTransferPlugin
             companyChestOrganize.NextAttemptAtMs = now + t.stepDelayMs;
 
             if (Configuration.DebugMode)
+            {
                 Svc.Log.Information($"[QuickTransfer] (MMB) Company Chest organize step {companyChestOrganize.Steps}: {cSrcType} slot={cSrcSlot} -> {cDstType} slot={cDstSlot} (phase=compact).");
+            }
             return;
         }
 
         // No more compaction moves; proceed to sorting.
         if (companyChestOrganize.Phase == 1)
+        {
             companyChestOrganize.Phase = 2;
+        }
 
         // Phase 2: reorder stacks by (UI category, itemId, HQ), mimicking the feel of Sort/itemsort.
         if (companyChestOrganize.Phase == 2)
         {
-            if (TryFindCompanyChestSortMove(pages, out InventoryType sSrcType, out uint sSrcSlot, out InventoryType sDstType, out uint sDstSlot))
+            if (TryFindCompanyChestSortMove(pages, out var sSrcType, out var sSrcSlot, out var sDstType, out var sDstSlot))
             {
                 // Snapshot BEFORE issuing the move (so we can detect when it applies).
-                uint preSrcId = 0u;
-                uint preDstId = 0u;
-                int preSrcQty = 0;
-                int preDstQty = 0;
+                var preSrcId = 0u;
+                var preDstId = 0u;
+                var preSrcQty = 0;
+                var preDstQty = 0;
                 try
                 {
-                    InventoryManager* inv = InventoryManager.Instance();
+                    var inv = InventoryManager.Instance();
                     if (inv != null)
                     {
                         TryGetSlotSnapshot(inv, sSrcType, sSrcSlot, out preSrcId, out preSrcQty);
@@ -1033,7 +1144,7 @@ public sealed unsafe partial class QuickTransferPlugin
                 companyChestOrganize.WaitDstSlot = sDstSlot;
                 companyChestOrganize.WaitDstItemId = preDstId;
                 companyChestOrganize.WaitDstQty = preDstQty;
-                (int stepDelayMs, int stabilizeMs, int applyTimeoutMs, int noApplyBackoffMs, int pageRetryMs, int numericStepDelayMs, int numericApplyTimeoutMs) t = GetTimings();
+                var t = GetTimings();
                 companyChestOrganize.WaitUntilMs = now + t.applyTimeoutMs;
                 companyChestOrganize.WaitObservedChangeAtMs = 0;
 
@@ -1041,14 +1152,18 @@ public sealed unsafe partial class QuickTransferPlugin
                 companyChestOrganize.NextAttemptAtMs = now + t.stepDelayMs;
 
                 if (Configuration.DebugMode)
+                {
                     Svc.Log.Information($"[QuickTransfer] (MMB) Company Chest organize step {companyChestOrganize.Steps}: {sSrcType} slot={sSrcSlot} -> {sDstType} slot={sDstSlot} (phase=sort).");
+                }
                 return;
             }
         }
 
         // Done (no more moves).
         if (Configuration.DebugMode)
+        {
             Svc.Log.Information($"[QuickTransfer] (MMB) Company Chest organize done; no moves found. pages=[{string.Join(", ", pages)}]");
+        }
         companyChestOrganize.Active = false;
     }
 
@@ -1066,67 +1181,94 @@ public sealed unsafe partial class QuickTransferPlugin
         dstSlot = 0;
         needsNumeric = false;
 
-        InventoryManager* inv = InventoryManager.Instance();
+        var inv = InventoryManager.Instance();
         if (inv == null)
+        {
             return false;
+        }
 
         const int slotCap = 80;
 
         // Find a destination stack with free space, then a later source stack of same item to merge.
-        foreach(InventoryType dt in pages)
+        foreach (var dt in pages)
         {
-            for(int di = 0; di < slotCap; di++)
+            for (var di = 0; di < slotCap; di++)
             {
-                InventoryItem* d = inv->GetInventorySlot(dt, di);
+                var d = inv->GetInventorySlot(dt, di);
                 if (d == null)
+                {
                     break;
+                }
                 if (d->ItemId == 0 || d->Quantity <= 0)
+                {
                     continue;
+                }
 
-                uint itemId = d->ItemId;
-                bool isHq = d->Flags.HasFlag(InventoryItem.ItemFlags.HighQuality);
-                uint maxStack = InventoryHelpers.GetItemStackSize(itemId);
+                var itemId = d->ItemId;
+                var isHq = d->Flags.HasFlag(InventoryItem.ItemFlags.HighQuality);
+                var maxStack = InventoryHelpers.GetItemStackSize(itemId);
                 if (maxStack <= 1)
+                {
                     continue;
+                }
 
-                int free = (int)maxStack - d->Quantity;
+                var free = (int)maxStack - d->Quantity;
                 if (free <= 0)
+                {
                     continue;
+                }
 
                 // Find a later stack to merge into this one.
-                bool foundDest = false;
-                int destGlobalIndex = 0;
-                for(int pi = 0; pi < pages.Length; pi++)
+                var foundDest = false;
+                var destGlobalIndex = 0;
+                for (var pi = 0; pi < pages.Length; pi++)
                 {
-                    if (pages[pi] != dt) continue;
+                    if (pages[pi] != dt)
+                    {
+                        continue;
+                    }
                     destGlobalIndex = pi * slotCap + di;
                     foundDest = true;
                     break;
                 }
                 if (!foundDest)
-                    continue;
-
-                for(int p = 0; p < pages.Length; p++)
                 {
-                    InventoryType st = pages[p];
-                    for(int si = 0; si < slotCap; si++)
-                    {
-                        InventoryItem* s = inv->GetInventorySlot(st, si);
-                        if (s == null)
-                            break;
-                        if (s->ItemId == 0 || s->Quantity <= 0)
-                            continue;
-                        if (s->ItemId != itemId)
-                            continue;
-                        bool sHq = s->Flags.HasFlag(InventoryItem.ItemFlags.HighQuality);
-                        if (sHq != isHq)
-                            continue;
+                    continue;
+                }
 
-                        int srcGlobalIndex = p * slotCap + si;
+                for (var p = 0; p < pages.Length; p++)
+                {
+                    var st = pages[p];
+                    for (var si = 0; si < slotCap; si++)
+                    {
+                        var s = inv->GetInventorySlot(st, si);
+                        if (s == null)
+                        {
+                            break;
+                        }
+                        if (s->ItemId == 0 || s->Quantity <= 0)
+                        {
+                            continue;
+                        }
+                        if (s->ItemId != itemId)
+                        {
+                            continue;
+                        }
+                        var sHq = s->Flags.HasFlag(InventoryItem.ItemFlags.HighQuality);
+                        if (sHq != isHq)
+                        {
+                            continue;
+                        }
+
+                        var srcGlobalIndex = p * slotCap + si;
                         if (srcGlobalIndex <= destGlobalIndex)
+                        {
                             continue;
+                        }
                         if (st == dt && si == di)
+                        {
                             continue;
+                        }
 
                         // Merging stacks usually prompts for quantity.
                         srcType = st;
@@ -1157,36 +1299,46 @@ public sealed unsafe partial class QuickTransferPlugin
         dstType = default;
         dstSlot = 0;
 
-        InventoryManager* inv = InventoryManager.Instance();
+        var inv = InventoryManager.Instance();
         if (inv == null)
+        {
             return false;
+        }
 
         const int slotCap = 80;
 
         // Find first empty, then next non-empty after it.
-        for(int dp = 0; dp < pages.Length; dp++)
+        for (var dp = 0; dp < pages.Length; dp++)
         {
-            InventoryType dt = pages[dp];
-            for(int di = 0; di < slotCap; di++)
+            var dt = pages[dp];
+            for (var di = 0; di < slotCap; di++)
             {
-                InventoryItem* d = inv->GetInventorySlot(dt, di);
+                var d = inv->GetInventorySlot(dt, di);
                 if (d == null)
+                {
                     break;
+                }
                 if (d->ItemId != 0)
+                {
                     continue;
+                }
 
                 // Found empty destination.
-                for(int sp = dp; sp < pages.Length; sp++)
+                for (var sp = dp; sp < pages.Length; sp++)
                 {
-                    InventoryType st = pages[sp];
-                    int start = sp == dp ? di + 1 : 0;
-                    for(int si = start; si < slotCap; si++)
+                    var st = pages[sp];
+                    var start = sp == dp ? di + 1 : 0;
+                    for (var si = start; si < slotCap; si++)
                     {
-                        InventoryItem* s = inv->GetInventorySlot(st, si);
+                        var s = inv->GetInventorySlot(st, si);
                         if (s == null)
+                        {
                             break;
+                        }
                         if (s->ItemId == 0 || s->Quantity <= 0)
+                        {
                             continue;
+                        }
 
                         srcType = st;
                         srcSlot = (uint)si;
@@ -1216,29 +1368,37 @@ public sealed unsafe partial class QuickTransferPlugin
         dstSlot = 0;
 
         if (pages.Length != 1)
+        {
             return false;
+        }
 
-        InventoryType page = pages[0];
-        InventoryManager* inv = InventoryManager.Instance();
+        var page = pages[0];
+        var inv = InventoryManager.Instance();
         if (inv == null)
+        {
             return false;
+        }
 
         InventoryContainer* c;
         try { c = inv->GetInventoryContainer(page); }
         catch { return false; }
         if (c == null || !c->IsLoaded || c->Size <= 0)
+        {
             return false;
+        }
 
-        int size = c->Size;
+        var size = c->Size;
         if (size <= 1)
+        {
             return false;
+        }
 
         // Build keys for current slots.
-        ChestSortKey[] keys = new ChestSortKey[size];
-        bool[] empty = new bool[size];
-        for(int i = 0; i < size; i++)
+        var keys = new ChestSortKey[size];
+        var empty = new bool[size];
+        for (var i = 0; i < size; i++)
         {
-            InventoryItem* it = c->GetInventorySlot(i);
+            var it = c->GetInventorySlot(i);
             if (it == null || it->ItemId == 0 || it->Quantity <= 0)
             {
                 empty[i] = true;
@@ -1246,17 +1406,20 @@ public sealed unsafe partial class QuickTransferPlugin
                 continue;
             }
 
-            uint id = it->ItemId;
-            bool hq = it->Flags.HasFlag(InventoryItem.ItemFlags.HighQuality);
-            uint cat = InventoryHelpers.GetItemUiCategory(id);
+            var id = it->ItemId;
+            var hq = it->Flags.HasFlag(InventoryItem.ItemFlags.HighQuality);
+            var cat = InventoryHelpers.GetItemUiCategory(id);
             keys[i] = new(cat, id, hq);
         }
 
         // Ensure empties are at the end (safety; compaction phase should mostly handle this).
-        for(int i = 0; i < size; i++)
+        for (var i = 0; i < size; i++)
         {
-            if (!empty[i]) continue;
-            for(int j = i + 1; j < size; j++)
+            if (!empty[i])
+            {
+                continue;
+            }
+            for (var j = i + 1; j < size; j++)
             {
                 if (!empty[j])
                 {
@@ -1272,17 +1435,24 @@ public sealed unsafe partial class QuickTransferPlugin
 
         // Selection-sort step: for first index i, if there is a smaller key later, swap/move it into i.
         // This uses HandleItemMove's swap behavior for occupied destinations.
-        for(int i = 0; i < size; i++)
+        for (var i = 0; i < size; i++)
         {
             if (empty[i])
-                break;
-
-            int best = i;
-            for(int j = i + 1; j < size; j++)
             {
-                if (empty[j]) break; // empties at end
+                break;
+            }
+
+            var best = i;
+            for (var j = i + 1; j < size; j++)
+            {
+                if (empty[j])
+                {
+                    break; // empties at end
+                }
                 if (keys[j].CompareTo(keys[best]) < 0)
+                {
                     best = j;
+                }
             }
 
             if (best != i && keys[best].CompareTo(keys[i]) < 0)
@@ -1305,15 +1475,17 @@ public sealed unsafe partial class QuickTransferPlugin
         uint destSlot,
         bool keepAliveForInputNumeric)
     {
-        RaptureAtkModule* module = RaptureAtkModule.Instance();
+        var module = RaptureAtkModule.Instance();
         if (module == null)
+        {
             return false;
+        }
 
         // IMPORTANT:
         // HandleItemMove expects InventoryType values (e.g. Inventory1=0, FreeCompanyPage1=20000),
         // not "container ids" like 48/57.
-        uint srcInvType = (uint)sourceType;
-        uint dstInvType = (uint)destType;
+        var srcInvType = (uint)sourceType;
+        var dstInvType = (uint)destType;
 
         nint localValuesAlloc = 0;
         nint localRetAlloc = 0;
@@ -1363,7 +1535,10 @@ public sealed unsafe partial class QuickTransferPlugin
             ret->Type = AtkValueType.Int;
             ret->Int = 0;
 
-            for(int i = 0; i < 4; i++) values[i].Type = AtkValueType.UInt;
+            for (var i = 0; i < 4; i++)
+            {
+                values[i].Type = AtkValueType.UInt;
+            }
             values[0].UInt = srcInvType;
             values[1].UInt = sourceSlot;
             values[2].UInt = dstInvType;
@@ -1373,16 +1548,16 @@ public sealed unsafe partial class QuickTransferPlugin
 
             if (Configuration.DebugMode)
             {
-                InventoryManager* inv = InventoryManager.Instance();
-                TryGetSlotSnapshot(inv, sourceType, sourceSlot, out uint sId, out int sQty);
-                TryGetSlotSnapshot(inv, destType, destSlot, out uint dId, out int dQty);
+                var inv = InventoryManager.Instance();
+                TryGetSlotSnapshot(inv, sourceType, sourceSlot, out var sId, out var sQty);
+                TryGetSlotSnapshot(inv, destType, destSlot, out var dId, out var dQty);
                 Svc.Log.Information(
                     $"[QuickTransfer] (MMB) CompanyChest HandleItemMove: retInt={ret->Int}, " +
                     $"src={sourceType} slot={sourceSlot} (id={sId},qty={sQty}) -> dst={destType} slot={destSlot} (id={dId},qty={dQty}), keepAlive={keepAliveForInputNumeric}");
             }
             return true;
         }
-        catch(Exception ex)
+        catch (Exception ex)
         {
             Svc.Log.Warning(ex, "[QuickTransfer] Company Chest HandleItemMove failed.");
             return false;
@@ -1430,20 +1605,26 @@ public sealed unsafe partial class QuickTransferPlugin
             itemId,
             isHq,
             maxStack,
-            out InventoryType _,
+            out var _,
             out destSlot))
+        {
             return true;
+        }
 
-        InventoryManager* inv = InventoryManager.Instance();
+        var inv = InventoryManager.Instance();
         if (inv == null)
+        {
             return false;
+        }
 
         const int slotCap = 64;
-        for(int i = 0; i < slotCap; i++)
+        for (var i = 0; i < slotCap; i++)
         {
-            InventoryItem* it = inv->GetInventorySlot(InventoryType.FreeCompanyCrystals, i);
+            var it = inv->GetInventorySlot(InventoryType.FreeCompanyCrystals, i);
             if (it == null)
+            {
                 break;
+            }
             if (it->ItemId == itemId)
             {
                 destSlot = (uint)i;
@@ -1465,13 +1646,17 @@ public sealed unsafe partial class QuickTransferPlugin
         if (Configuration.CompanyChestDepositEmptySlotsFirst)
         {
             if (TryFindCompanyChestFirstEmptySlot(pages, out destType, out destSlot))
+            {
                 return true;
+            }
 
             return TryFindCompanyChestBestStackSlot(pages, itemId, isHq, maxStack, out destType, out destSlot);
         }
 
         if (TryFindCompanyChestBestStackSlot(pages, itemId, isHq, maxStack, out destType, out destSlot))
+        {
             return true;
+        }
 
         return TryFindCompanyChestFirstEmptySlot(pages, out destType, out destSlot);
     }
@@ -1485,20 +1670,26 @@ public sealed unsafe partial class QuickTransferPlugin
         destSlot = 0;
 
         if (pages.Length == 0)
+        {
             return false;
+        }
 
-        InventoryManager* inv = InventoryManager.Instance();
+        var inv = InventoryManager.Instance();
         if (inv == null)
+        {
             return false;
+        }
 
         const int slotCap = 80;
-        foreach(InventoryType t in pages)
+        foreach (var t in pages)
         {
-            for(int i = 0; i < slotCap; i++)
+            for (var i = 0; i < slotCap; i++)
             {
-                InventoryItem* item = inv->GetInventorySlot(t, i);
+                var item = inv->GetInventorySlot(t, i);
                 if (item == null)
+                {
                     break;
+                }
                 if (item->ItemId == 0)
                 {
                     destType = t;
@@ -1523,36 +1714,50 @@ public sealed unsafe partial class QuickTransferPlugin
         destSlot = 0;
 
         if (pages.Length == 0 || itemId == 0 || maxStack <= 1)
+        {
             return false;
+        }
 
-        InventoryManager* inv = InventoryManager.Instance();
+        var inv = InventoryManager.Instance();
         if (inv == null)
+        {
             return false;
+        }
 
         const int slotCap = 80;
-        int bestFree = 0;
-        foreach(InventoryType t in pages)
+        var bestFree = 0;
+        foreach (var t in pages)
         {
-            for(int i = 0; i < slotCap; i++)
+            for (var i = 0; i < slotCap; i++)
             {
-                InventoryItem* it = inv->GetInventorySlot(t, i);
+                var it = inv->GetInventorySlot(t, i);
                 if (it == null)
+                {
                     break;
+                }
 
                 if (it->ItemId != itemId)
+                {
                     continue;
+                }
 
-                bool hq = it->Flags.HasFlag(InventoryItem.ItemFlags.HighQuality);
+                var hq = it->Flags.HasFlag(InventoryItem.ItemFlags.HighQuality);
                 if (hq != isHq)
+                {
                     continue;
+                }
 
-                int qty = it->Quantity;
+                var qty = it->Quantity;
                 if (qty <= 0)
+                {
                     continue;
+                }
 
-                int free = (int)maxStack - qty;
+                var free = (int)maxStack - qty;
                 if (free <= 0)
+                {
                     continue;
+                }
 
                 if (free > bestFree)
                 {
@@ -1569,37 +1774,51 @@ public sealed unsafe partial class QuickTransferPlugin
     {
         try
         {
-            AddonContextMenu* ctxMenu = (AddonContextMenu*)AddonHelpers.GetAddonByName("ContextMenu");
+            var ctxMenu = (AddonContextMenu*)AddonHelpers.GetAddonByName("ContextMenu");
             if (ctxMenu == null)
+            {
                 return false;
+            }
 
             // Find the list component and pick the row whose label is "Remove".
             // FreeCompanyChest uses a Default context menu, so the AgentInventoryContext index-based selection does not apply.
-            for(uint listId = 1; listId <= 6; listId++)
+            for (uint listId = 1; listId <= 6; listId++)
             {
-                AtkComponentList* list = ctxMenu->GetComponentListById(listId);
+                var list = ctxMenu->GetComponentListById(listId);
                 if (list == null)
-                    continue;
-
-                int itemCount = list->GetItemCount();
-                if (itemCount is <= 0 or > 64)
-                    continue;
-
-                for(int i = 0; i < itemCount; i++)
                 {
-                    CStringPointer labelPtr = list->GetItemLabel(i);
-                    if ((byte*)labelPtr == null)
-                        continue;
+                    continue;
+                }
 
-                    string label = Marshal.PtrToStringUTF8(new(labelPtr))?.TrimEnd('\0') ?? string.Empty;
-                    if (string.IsNullOrWhiteSpace(label))
+                var itemCount = list->GetItemCount();
+                if (itemCount is <= 0 or > 64)
+                {
+                    continue;
+                }
+
+                for (var i = 0; i < itemCount; i++)
+                {
+                    var labelPtr = list->GetItemLabel(i);
+                    if ((byte*)labelPtr == null)
+                    {
                         continue;
+                    }
+
+                    var label = Marshal.PtrToStringUTF8(new(labelPtr))?.TrimEnd('\0') ?? string.Empty;
+                    if (string.IsNullOrWhiteSpace(label))
+                    {
+                        continue;
+                    }
 
                     if (Configuration.DebugMode)
+                    {
                         Svc.Log.Information($"[QuickTransfer] ContextMenu listId={listId} row={i} label='{label}'");
+                    }
 
                     if (!label.Equals("Remove", StringComparison.OrdinalIgnoreCase))
+                    {
                         continue;
+                    }
 
                     // Trigger via callback payload (matches the inventory context menu pattern).
                     AtkValueHelpers.GenerateCallback((AtkUnitBase*)ctxMenu, 0, i, 0U, 0, 0);
@@ -1608,7 +1827,9 @@ public sealed unsafe partial class QuickTransferPlugin
                     pendingCloseContextMenuAtMs = Environment.TickCount64 + 50;
 
                     if (Configuration.DebugMode)
+                    {
                         Svc.Log.Information($"[QuickTransfer] Triggered Company Chest 'Remove' (listId={listId}, row={i}).");
+                    }
                     return true;
                 }
             }
@@ -1616,7 +1837,7 @@ public sealed unsafe partial class QuickTransferPlugin
             // Fallback: keep old string-scan (helpful for debugging), but don't attempt a blind click.
             return ContextMenuHandler.ContainsString((AtkUnitBase*)ctxMenu, "Remove", Configuration.DebugMode);
         }
-        catch(Exception ex)
+        catch (Exception ex)
         {
             Svc.Log.Warning(ex, "[QuickTransfer] Failed to select Remove from Company Chest context menu.");
             return false;
@@ -1629,9 +1850,11 @@ public sealed unsafe partial class QuickTransferPlugin
         {
             // IMPORTANT: this mapping is about tab clicks, not how many compartments we *want* to operate on.
             // So we always consider all possible item pages (up to 5), even if the user configured fewer.
-            InventoryType[] pages = GetAllCompanyChestItemPages();
+            var pages = GetAllCompanyChestItemPages();
             if (pages.Length == 0)
+            {
                 return false;
+            }
 
             // Free Company Chest (your UI):
             // param=1 -> Items tab 1 (FreeCompanyPage1)
@@ -1647,7 +1870,9 @@ public sealed unsafe partial class QuickTransferPlugin
             }
 
             if (eventParam < 1 || eventParam > pages.Length)
+            {
                 return false;
+            }
 
             page = pages[eventParam - 1];
             return true;
