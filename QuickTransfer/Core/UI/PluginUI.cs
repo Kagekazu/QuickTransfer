@@ -95,7 +95,7 @@ public class PluginUI : Window
 
         ImGui.Spacing();
 
-        bool enabled = config.Enabled;
+        var enabled = config.Enabled;
         if (ImGui.Checkbox("Plugin enabled", ref enabled))
         {
             config.Enabled = enabled;
@@ -113,7 +113,7 @@ public class PluginUI : Window
         {
             Indent(() =>
             {
-                bool mmbSort = config.EnableMiddleClickSort;
+                var mmbSort = config.EnableMiddleClickSort;
                 if (ImGui.Checkbox("Sort inventories on middle-click", ref mmbSort))
                 {
                     config.EnableMiddleClickSort = mmbSort;
@@ -128,7 +128,7 @@ public class PluginUI : Window
         {
             Indent(() =>
             {
-                bool enableFc = config.EnableCompanyChest;
+                var enableFc = config.EnableCompanyChest;
                 if (ImGui.Checkbox("Enable FC chest helpers", ref enableFc))
                 {
                     config.EnableCompanyChest = enableFc;
@@ -140,7 +140,7 @@ public class PluginUI : Window
                 ImGui.Spacing();
                 using (ImRaii.Disabled(!config.EnableCompanyChest))
                 {
-                    bool mmbOrganize = config.EnableCompanyChestMiddleClickOrganize;
+                    var mmbOrganize = config.EnableCompanyChestMiddleClickOrganize;
                     if (ImGui.Checkbox("Middle-click organize (stack + compact)", ref mmbOrganize))
                     {
                         config.EnableCompanyChestMiddleClickOrganize = mmbOrganize;
@@ -149,7 +149,7 @@ public class PluginUI : Window
 
                     Hint("FC chest has no Sort menu — middle-click runs an organize pass on the active tab.");
 
-                    bool autoConfirmQty = config.AutoConfirmCompanyChestQuantity;
+                    var autoConfirmQty = config.AutoConfirmCompanyChestQuantity;
                     if (ImGui.Checkbox("Auto-confirm quantity dialogs", ref autoConfirmQty))
                     {
                         config.AutoConfirmCompanyChestQuantity = autoConfirmQty;
@@ -158,7 +158,7 @@ public class PluginUI : Window
 
                     Hint("Auto-fills and confirms store, remove, and split quantity prompts.");
 
-                    bool emptySlotsFirst = config.CompanyChestDepositEmptySlotsFirst;
+                    var emptySlotsFirst = config.CompanyChestDepositEmptySlotsFirst;
                     if (ImGui.Checkbox("Deposit to empty slots first", ref emptySlotsFirst))
                     {
                         config.CompanyChestDepositEmptySlotsFirst = emptySlotsFirst;
@@ -169,7 +169,7 @@ public class PluginUI : Window
 
                     ImGui.Text("Unlocked item tabs");
                     ImGui.SetNextItemWidth(220);
-                    int compartments = config.CompanyChestCompartments;
+                    var compartments = config.CompanyChestCompartments;
                     if (ImGui.SliderInt("##CompanyChestCompartments", ref compartments, 3, 5))
                     {
                         config.CompanyChestCompartments = compartments;
@@ -188,7 +188,7 @@ public class PluginUI : Window
         {
             Indent(() =>
             {
-                bool enableVendor = config.EnableVendorQuickSell;
+                var enableVendor = config.EnableVendorQuickSell;
                 if (ImGui.Checkbox("Enable vendor quick sell", ref enableVendor))
                 {
                     config.EnableVendorQuickSell = enableVendor;
@@ -199,7 +199,7 @@ public class PluginUI : Window
 
                 using (ImRaii.Disabled(!config.EnableVendorQuickSell))
                 {
-                    bool autoConfirmSell = config.AutoConfirmVendorSell;
+                    var autoConfirmSell = config.AutoConfirmVendorSell;
                     if (ImGui.Checkbox("Auto-confirm sell dialogs", ref autoConfirmSell))
                     {
                         config.AutoConfirmVendorSell = autoConfirmSell;
@@ -217,7 +217,7 @@ public class PluginUI : Window
             {
                 ImGui.Text("Transfer cooldown");
                 ImGui.SetNextItemWidth(220);
-                int cooldown = config.TransferCooldownMs;
+                var cooldown = config.TransferCooldownMs;
                 if (ImGui.SliderInt("##TransferCooldownMs", ref cooldown, 0, 1000, "%d ms"))
                 {
                     config.TransferCooldownMs = cooldown;
@@ -228,7 +228,7 @@ public class PluginUI : Window
 
                 ImGui.Spacing();
 
-                bool debugMode = config.DebugMode;
+                var debugMode = config.DebugMode;
                 if (ImGui.Checkbox("Debug mode", ref debugMode))
                 {
                     config.DebugMode = debugMode;
@@ -272,9 +272,11 @@ public class PluginUI : Window
 
     private void DrawModifierTable()
     {
-        using ImRaii.TableDisposable table = ImRaii.Table("ModifierTable", 2, ImGuiTableFlags.Borders | ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingStretchProp);
+        using var table = ImRaii.Table("ModifierTable", 2, ImGuiTableFlags.Borders | ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingStretchProp);
         if (!table)
+        {
             return;
+        }
 
         ImGui.TableSetupColumn("Input", ImGuiTableColumnFlags.WidthFixed, 120);
         ImGui.TableSetupColumn("Action", ImGuiTableColumnFlags.WidthStretch);
@@ -307,7 +309,9 @@ public class PluginUI : Window
     private static void Hint(string text)
     {
         using (ImRaii.PushColor(ImGuiCol.Text, MutedColor))
+        {
             ImGui.TextWrapped(text);
+        }
 
         ImGui.Spacing();
     }

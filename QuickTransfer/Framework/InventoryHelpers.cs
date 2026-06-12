@@ -93,22 +93,24 @@ internal static unsafe class InventoryHelpers
 
     public static bool IsCompanyChestType(InventoryType inventoryType)
     {
-        string? name = Enum.GetName(inventoryType);
+        var name = Enum.GetName(inventoryType);
         return !string.IsNullOrEmpty(name) && name.StartsWith("FreeCompanyPage", StringComparison.OrdinalIgnoreCase);
     }
 
     public static bool IsAddonVisible(string addonName, int index = 1)
     {
-        AtkUnitBase* addon = AddonHelpers.GetAddonByName(addonName, index);
+        var addon = AddonHelpers.GetAddonByName(addonName, index);
         return addon != null && addon->IsVisible;
     }
 
     public static bool IsAddonVisibleAnyIndex(string addonName, int maxIndex = 6)
     {
-        for(int i = 1; i <= maxIndex; i++)
+        for (var i = 1; i <= maxIndex; i++)
         {
             if (IsAddonVisible(addonName, i))
+            {
                 return true;
+            }
         }
 
         return false;
@@ -145,13 +147,17 @@ internal static unsafe class InventoryHelpers
         isHq = false;
         quantity = 0;
 
-        InventoryManager* inv = InventoryManager.Instance();
+        var inv = InventoryManager.Instance();
         if (inv == null)
+        {
             return false;
+        }
 
-        InventoryItem* it = inv->GetInventorySlot(type, slot);
+        var it = inv->GetInventorySlot(type, slot);
         if (it == null)
+        {
             return false;
+        }
 
         itemId = it->ItemId;
         isHq = it->Flags.HasFlag(InventoryItem.ItemFlags.HighQuality);
@@ -164,8 +170,10 @@ internal static unsafe class InventoryHelpers
         try
         {
             if (inv == null)
+            {
                 return false;
-            InventoryContainer* c = inv->GetInventoryContainer(type);
+            }
+            var c = inv->GetInventoryContainer(type);
             return c != null && c->IsLoaded && c->Size > 0;
         }
         catch
@@ -183,20 +191,26 @@ internal static unsafe class InventoryHelpers
         try
         {
             if (itemId == 0)
-                return 1;
-
-            lock(StackSizeCache)
             {
-                if (StackSizeCache.TryGetValue(itemId, out uint cached))
+                return 1;
+            }
+
+            lock (StackSizeCache)
+            {
+                if (StackSizeCache.TryGetValue(itemId, out var cached))
+                {
                     return cached;
+                }
             }
 
             if (!GenericHelpers.TryGetRow(itemId, out Item row) || row.RowId == 0)
+            {
                 return 999;
+            }
 
-            uint s = row.StackSize;
-            uint result = s <= 0 ? 1U : s;
-            lock(StackSizeCache)
+            var s = row.StackSize;
+            var result = s <= 0 ? 1U : s;
+            lock (StackSizeCache)
             {
                 StackSizeCache[itemId] = result;
             }
@@ -213,16 +227,22 @@ internal static unsafe class InventoryHelpers
         try
         {
             if (itemId == 0)
-                return 0;
-
-            lock(ItemUiCategoryCache)
             {
-                if (ItemUiCategoryCache.TryGetValue(itemId, out uint cached))
+                return 0;
+            }
+
+            lock (ItemUiCategoryCache)
+            {
+                if (ItemUiCategoryCache.TryGetValue(itemId, out var cached))
+                {
                     return cached;
+                }
             }
 
             if (!GenericHelpers.TryGetRow(itemId, out Item row) || row.RowId == 0)
+            {
                 return 0;
+            }
 
             uint result;
             try
@@ -234,7 +254,7 @@ internal static unsafe class InventoryHelpers
                 result = 0;
             }
 
-            lock(ItemUiCategoryCache)
+            lock (ItemUiCategoryCache)
             {
                 ItemUiCategoryCache[itemId] = result;
             }

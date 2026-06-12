@@ -15,10 +15,12 @@ internal static unsafe partial class TitleBarVersion
 
     public static void DrawFromContext(int customTitleBarButtonCount, bool showAdditionalOptionsButton, string windowName)
     {
-        Vector2 windowPos = ImGui.GetWindowPos();
-        Vector2 windowSize = ImGui.GetWindowSize();
+        var windowPos = ImGui.GetWindowPos();
+        var windowSize = ImGui.GetWindowSize();
         if (windowSize.X <= 0f || windowSize.Y <= 0f)
+        {
             return;
+        }
 
         TryCalibrateOffsets(windowName, windowPos, windowSize);
         DrawAt(windowPos, windowSize, customTitleBarButtonCount, showAdditionalOptionsButton);
@@ -26,8 +28,10 @@ internal static unsafe partial class TitleBarVersion
 
     public static void DrawFromWindowLookup(int customTitleBarButtonCount, bool showAdditionalOptionsButton, string windowName)
     {
-        if (!TryResolveWindowRect(windowName, out Vector2 windowPos, out Vector2 windowSize))
+        if (!TryResolveWindowRect(windowName, out var windowPos, out var windowSize))
+        {
             return;
+        }
 
         DrawAt(windowPos, windowSize, customTitleBarButtonCount, showAdditionalOptionsButton);
     }
@@ -45,19 +49,23 @@ internal static unsafe partial class TitleBarVersion
         int customTitleBarButtonCount,
         bool showAdditionalOptionsButton)
     {
-        string text = GetVersionLabel();
+        var text = GetVersionLabel();
         if (string.IsNullOrEmpty(text))
+        {
             return;
+        }
 
-        Vector2 textSize = ImGui.CalcTextSize(text);
-        ImGuiStylePtr style = ImGui.GetStyle();
-        float buttonSize = ImGui.GetFontSize();
-        float padRight = style.FramePadding.X + buttonSize + style.ItemInnerSpacing.X;
+        var textSize = ImGui.CalcTextSize(text);
+        var style = ImGui.GetStyle();
+        var buttonSize = ImGui.GetFontSize();
+        var padRight = style.FramePadding.X + buttonSize + style.ItemInnerSpacing.X;
 
         if (style.WindowMenuButtonPosition == ImGuiDir.Right)
+        {
             padRight += buttonSize + style.ItemInnerSpacing.X;
+        }
 
-        int extraButtons = customTitleBarButtonCount + (showAdditionalOptionsButton ? 1 : 0);
+        var extraButtons = customTitleBarButtonCount + (showAdditionalOptionsButton ? 1 : 0);
         padRight += extraButtons * (buttonSize + style.ItemInnerSpacing.X);
         padRight += style.ItemInnerSpacing.X;
 
@@ -76,23 +84,31 @@ internal static unsafe partial class TitleBarVersion
     private static void TryCalibrateOffsets(string windowName, Vector2 expectedPos, Vector2 expectedSize)
     {
         if (offsetsCalibrated || string.IsNullOrWhiteSpace(windowName))
-            return;
-
-        ImGuiWindow* window = FindWindowByName(windowName);
-        if (window == null)
-            return;
-
-        byte* basePtr = (byte*)window;
-        for(int offset = 0; offset < 512; offset += 4)
         {
-            Vector2 candidatePos = ReadVector2(basePtr + offset);
-            if (Vector2.Distance(candidatePos, expectedPos) > 1f)
-                continue;
+            return;
+        }
 
-            Vector2 candidateSize = ReadVector2(basePtr + offset + 8);
+        var window = FindWindowByName(windowName);
+        if (window == null)
+        {
+            return;
+        }
+
+        var basePtr = (byte*)window;
+        for (var offset = 0; offset < 512; offset += 4)
+        {
+            var candidatePos = ReadVector2(basePtr + offset);
+            if (Vector2.Distance(candidatePos, expectedPos) > 1f)
+            {
+                continue;
+            }
+
+            var candidateSize = ReadVector2(basePtr + offset + 8);
             if (MathF.Abs(candidateSize.X - expectedSize.X) > 2f ||
                 MathF.Abs(candidateSize.Y - expectedSize.Y) > 2f)
+            {
                 continue;
+            }
 
             posOffset = offset;
             sizeOffset = offset + 8;
@@ -107,13 +123,17 @@ internal static unsafe partial class TitleBarVersion
         windowSize = default;
 
         if (string.IsNullOrWhiteSpace(windowName))
+        {
             return false;
+        }
 
-        ImGuiWindow* window = FindWindowByName(windowName);
+        var window = FindWindowByName(windowName);
         if (window == null)
+        {
             return false;
+        }
 
-        byte* basePtr = (byte*)window;
+        var basePtr = (byte*)window;
         windowPos = ReadVector2(basePtr + posOffset);
         windowSize = ReadVector2(basePtr + sizeOffset);
         return windowSize.X > 0f && windowSize.Y > 0f;
@@ -124,7 +144,7 @@ internal static unsafe partial class TitleBarVersion
 
     private static ImGuiWindow* FindWindowByName(string windowName)
     {
-        nint namePtr = Marshal.StringToCoTaskMemUTF8(windowName);
+        var namePtr = Marshal.StringToCoTaskMemUTF8(windowName);
         try
         {
             return (ImGuiWindow*)igFindWindowByName((byte*)namePtr);
@@ -141,11 +161,13 @@ internal static unsafe partial class TitleBarVersion
 
     private static string GetVersionLabel()
     {
-        Version? manifestVersion = Svc.PluginInterface.Manifest.AssemblyVersion;
+        var manifestVersion = Svc.PluginInterface.Manifest.AssemblyVersion;
         if (manifestVersion != null)
+        {
             return "v" + FormatVersion(manifestVersion);
+        }
 
-        Version? assemblyVersion = Assembly.GetExecutingAssembly().GetName().Version;
+        var assemblyVersion = Assembly.GetExecutingAssembly().GetName().Version;
         return assemblyVersion != null ? "v" + FormatVersion(assemblyVersion) : "v?.?.?.?";
     }
 
