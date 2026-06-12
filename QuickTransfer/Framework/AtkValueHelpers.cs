@@ -4,16 +4,13 @@ using System.Runtime.InteropServices;
 using System.Text;
 using AtkValueType = FFXIVClientStructs.FFXIV.Component.GUI.AtkValueType;
 
-namespace QuickTransfer;
+namespace QuickTransfer.Framework;
 
 /// <summary>
 ///     Utility functions for working with AtkValue structures.
 /// </summary>
 internal static unsafe class AtkValueHelpers
 {
-    public static bool IsStringValueType(AtkValueType type)
-        => type is AtkValueType.String or AtkValueType.ManagedString or AtkValueType.ConstString;
-
     public static string ReadAtkValueString(AtkValue v)
     {
         if ((byte*)v.String == null)

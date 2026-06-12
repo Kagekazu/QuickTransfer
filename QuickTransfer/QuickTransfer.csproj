@@ -26,11 +26,12 @@
     </ItemGroup>
 
     <ItemGroup>
-        <None Update="QuickTransfer.json">
-            <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-        </None>
-        <None Include="images\icon.png">
-            <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-        </None>
+        <Content Include=".\QuickTransfer.json">
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </Content>
+        <Content Include="..\images\icon.png">
+            <Link>images/icon.png</Link>
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </Content>
     </ItemGroup>
 </Project>

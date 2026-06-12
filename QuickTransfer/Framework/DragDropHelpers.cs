@@ -1,7 +1,7 @@
 using Dalamud.Game.Addon.Lifecycle.AddonArgTypes;
 using FFXIVClientStructs.FFXIV.Client.Game;
 using FFXIVClientStructs.FFXIV.Component.GUI;
-namespace QuickTransfer;
+namespace QuickTransfer.Framework;
 
 /// <summary>
 ///     Helper functions for parsing drag-drop interfaces from UI events.
@@ -191,63 +191,6 @@ internal static unsafe class DragDropHelpers
 
         invType = (InventoryType)payload->Int1;
         slot = payload->Int2;
-        return slot is not < 0 and not > 500;
-    }
-
-    public static bool TryGetSlotFromDragDropInterfaceForAddon(
-        AtkDragDropInterface* ddi,
-        string addonName,
-        uint addonId,
-        out InventoryType invType,
-        out int slot,
-        out int rawInt1,
-        out int rawInt2,
-        out uint rawFlags)
-    {
-        invType = default;
-        slot = -1;
-        rawInt1 = 0;
-        rawInt2 = 0;
-        rawFlags = 0;
-
-        if (ddi == null)
-            return false;
-
-        AtkDragDropPayloadContainer* payload;
-        try
-        {
-            payload = ddi->GetPayloadContainer();
-        }
-        catch
-        {
-            return false;
-        }
-        if (payload == null)
-            return false;
-
-        rawInt1 = payload->Int1;
-        rawInt2 = payload->Int2;
-        rawFlags = payload->Flags;
-
-        // Default interpretation (most inventory add-ons): (InventoryType, Slot)
-        invType = (InventoryType)rawInt1;
-        slot = rawInt2;
-
-        // ArmouryBoard special-case: some builds use (CategoryIndex, Slot)
-        // and Int1 may look like Inventory1..Inventory4 (0..3), which is clearly wrong for ArmouryBoard.
-        if (!string.IsNullOrEmpty(addonName) &&
-            addonName.Equals("ArmouryBoard", StringComparison.OrdinalIgnoreCase) &&
-            InventoryHelpers.TryGetVisibleAddon("ArmouryBoard", out AtkUnitBase* ab) &&
-            ab != null &&
-            ab->Id == addonId)
-        {
-            if (rawInt1 >= 0 && rawInt1 < ArmouryBoardIndexToType.Length)
-            {
-                invType = ArmouryBoardIndexToType[rawInt1];
-                slot = rawInt2;
-            }
-        }
-
         return slot is not < 0 and not > 500;
     }
 

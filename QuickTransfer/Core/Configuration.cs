@@ -45,7 +45,5 @@ public sealed class Configuration : IPluginConfiguration
         _pendingPersist = false;
     }
 
-    public void FlushToDisk() => WriteToDisk();
-
     private void WriteToDisk() => pluginInterface!.SavePluginConfig(this);
 }

@@ -2,7 +2,7 @@ using ECommons;
 using FFXIVClientStructs.FFXIV.Client.Game;
 using FFXIVClientStructs.FFXIV.Component.GUI;
 using Lumina.Excel.Sheets;
-namespace QuickTransfer;
+namespace QuickTransfer.Framework;
 
 /// <summary>
 ///     Static helper functions for inventory detection, type checking, and addon visibility.
@@ -112,35 +112,6 @@ internal static unsafe class InventoryHelpers
         }
 
         return false;
-    }
-
-    public static bool IsAnyAddonVisible(IEnumerable<string> addonNames, int index = 1)
-    {
-        foreach(string name in addonNames)
-        {
-            if (IsAddonVisible(name, index))
-                return true;
-        }
-
-        return false;
-    }
-
-    public static bool IsAnyAddonVisibleAnyIndex(IEnumerable<string> addonNames, int maxIndex = 6)
-    {
-        foreach(string name in addonNames)
-        {
-            if (IsAddonVisibleAnyIndex(name, maxIndex))
-                return true;
-        }
-
-        return false;
-    }
-
-    public static bool IsInventoryAndSaddlebagOpen()
-    {
-        bool inventoryOpen = IsAddonVisibleAnyIndex("Inventory");
-        bool saddlebagOpen = IsAddonVisibleAnyIndex("InventoryBuddy") || IsAddonVisibleAnyIndex("InventoryBuddy2");
-        return inventoryOpen && saddlebagOpen;
     }
 
     public static bool IsSaddlebagOpen()

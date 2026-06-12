@@ -1,7 +1,7 @@
 using ECommons;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
-namespace QuickTransfer;
+namespace QuickTransfer.Framework;
 
 internal static partial class CursorHoverHelpers
 {

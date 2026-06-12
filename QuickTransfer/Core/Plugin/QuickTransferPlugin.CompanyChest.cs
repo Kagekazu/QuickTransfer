@@ -8,7 +8,7 @@ using AtkValueType = FFXIVClientStructs.FFXIV.Component.GUI.AtkValueType;
 
 namespace QuickTransfer;
 
-public sealed unsafe partial class Plugin
+public sealed unsafe partial class QuickTransferPlugin
 {
     private static void TryGetSlotSnapshot(InventoryManager* inv,
         InventoryType type,
