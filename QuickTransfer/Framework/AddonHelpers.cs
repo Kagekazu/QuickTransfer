@@ -1,5 +1,5 @@
 using FFXIVClientStructs.FFXIV.Component.GUI;
-namespace QuickTransfer;
+namespace QuickTransfer.Framework;
 
 /// <summary>
 ///     ClientStructs-based addon lookup (replaces IGameGui.GetAddonByName for native pointers).

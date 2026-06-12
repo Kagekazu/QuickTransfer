@@ -3,7 +3,7 @@ using FFXIVClientStructs.FFXIV.Client.UI.Agent;
 using FFXIVClientStructs.FFXIV.Component.GUI;
 namespace QuickTransfer;
 
-public sealed unsafe partial class Plugin
+public sealed unsafe partial class QuickTransferPlugin
 {
     private bool TryUpdateLastHoverAddonFromCollisionManager(long now)
     {

@@ -47,7 +47,7 @@ jobs:
       - name: Prepare release zip
         shell: pwsh
         run: |
-          $zip = "bin\\x64\\Release\\QuickTransfer\\latest.zip"
+          $zip = "QuickTransfer\\bin\\x64\\Release\\QuickTransfer\\latest.zip"
           if (!(Test-Path $zip)) { throw "Expected pack zip not found: $zip" }
           Copy-Item $zip "QuickTransfer.zip" -Force
 

@@ -2,7 +2,7 @@ using FFXIVClientStructs.FFXIV.Client.UI.Agent;
 using FFXIVClientStructs.FFXIV.Component.GUI;
 using AtkValueType = FFXIVClientStructs.FFXIV.Component.GUI.AtkValueType;
 
-namespace QuickTransfer;
+namespace QuickTransfer.Framework;
 
 /// <summary>
 ///     Handles context menu selection and matching logic.
@@ -30,8 +30,6 @@ internal static unsafe class ContextMenuHandler
         Ctrl,
         Alt
     }
-
-    // Access services through Plugin's static properties
 
     public static bool ContextLabelMatches(AutoContextAction desiredAction, string menuText)
     {

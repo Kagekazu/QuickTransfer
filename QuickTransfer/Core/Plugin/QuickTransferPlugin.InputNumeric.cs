@@ -5,7 +5,7 @@ using AtkValueType = FFXIVClientStructs.FFXIV.Component.GUI.AtkValueType;
 
 namespace QuickTransfer;
 
-public sealed unsafe partial class Plugin
+public sealed unsafe partial class QuickTransferPlugin
 {
     private void OnInputNumericPreSetup(AddonEvent type, AddonArgs args)
     {

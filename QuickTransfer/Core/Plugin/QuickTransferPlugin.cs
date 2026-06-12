@@ -13,15 +13,15 @@ using FFXIVClientStructs.FFXIV.Client.UI.Agent;
 using FFXIVClientStructs.FFXIV.Component.GUI;
 using System.Runtime.InteropServices;
 using AtkValueType = FFXIVClientStructs.FFXIV.Component.GUI.AtkValueType;
-using AutoContextAction = QuickTransfer.ContextMenuHandler.AutoContextAction;
-using ModifierMode = QuickTransfer.ContextMenuHandler.ModifierMode;
+using AutoContextAction = QuickTransfer.Framework.ContextMenuHandler.AutoContextAction;
+using ModifierMode = QuickTransfer.Framework.ContextMenuHandler.ModifierMode;
 
 namespace QuickTransfer;
 
-public sealed unsafe partial class Plugin : IDalamudPlugin
+public sealed unsafe partial class QuickTransferPlugin : IDalamudPlugin
 {
     private readonly Dictionary<int, Dictionary<int, InventoryType>> companyChestSelectedTabCandidates = [];
-    private readonly QuickTransferWindow configWindow;
+    private readonly PluginUI pluginUi;
 
     // Cache a known-good (type, slot, a4) that successfully produced a populated inventory context menu for a given addon.
     // This allows MMB to "Sort" even when hover payloads are weird/un-decodable, because Sort applies to the container.
@@ -103,7 +103,7 @@ public sealed unsafe partial class Plugin : IDalamudPlugin
     private long suppressContextMenuUntilMs;
     private long suppressInputNumericUntilMs;
 
-    public Plugin(IDalamudPluginInterface pluginInterface)
+    public QuickTransferPlugin(IDalamudPluginInterface pluginInterface)
     {
         ECommonsMain.Init(pluginInterface, this);
 
@@ -132,8 +132,8 @@ public sealed unsafe partial class Plugin : IDalamudPlugin
             // ignore
         }
 
-        configWindow = new(Configuration);
-        windowSystem.AddWindow(configWindow);
+        pluginUi = new(Configuration);
+        windowSystem.AddWindow(pluginUi);
 
         Svc.Commands.AddHandler(QuickTransferConstants.CommandName, new(OnCommand)
         {
@@ -231,8 +231,6 @@ public sealed unsafe partial class Plugin : IDalamudPlugin
         Svc.PluginInterface.UiBuilder.OpenMainUi -= OpenConfigUi;
 
         windowSystem.RemoveAllWindows();
-        configWindow.Dispose();
-
         Svc.Commands.RemoveHandler(QuickTransferConstants.CommandName);
 
         ECommonsMain.Dispose();
@@ -246,7 +244,7 @@ public sealed unsafe partial class Plugin : IDalamudPlugin
 
     private void OnCommand(string command, string args) => OpenConfigUi();
 
-    private void OpenConfigUi() => configWindow.IsOpen = true;
+    private void OpenConfigUi() => pluginUi.IsOpen = true;
 
     private void OpenForItemSlotDetour(
         AgentInventoryContext* agent,

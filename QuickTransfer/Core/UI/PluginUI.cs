@@ -4,9 +4,9 @@ using System.Diagnostics;
 using System.Numerics;
 namespace QuickTransfer;
 
-public class QuickTransferWindow : Window, IDisposable
+public class PluginUI : Window
 {
-    private const string WindowId = "QuickTransferConfig";
+    private const string WindowId = "QuickTransfer";
 
     private static readonly Vector4 HeaderColor = new(0.45f, 0.78f, 1f, 1f);
     private static readonly Vector4 MutedColor = new(0.65f, 0.65f, 0.65f, 1f);
@@ -17,7 +17,7 @@ public class QuickTransferWindow : Window, IDisposable
     private readonly Configuration config;
     private bool drewTitleBarVersion;
 
-    public QuickTransferWindow(Configuration config)
+    public PluginUI(Configuration config)
         : base($"QuickTransfer###{WindowId}")
     {
         this.config = config;
@@ -35,11 +35,6 @@ public class QuickTransferWindow : Window, IDisposable
                 UseShellExecute = true
             })
         });
-    }
-
-    public void Dispose()
-    {
-        // no-op
     }
 
     public override void OnClose()

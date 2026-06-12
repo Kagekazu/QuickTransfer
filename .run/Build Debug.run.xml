@@ -1,6 +1,6 @@
 <component name="ProjectRunConfigurationManager">
   <configuration default="true" name="Build Debug" type="ShConfigurationType">
-    <option name="SCRIPT_TEXT" value="dotnet build &quot;$PROJECT_DIR$/QuickTransfer.slnx&quot; -c Debug" />
+    <option name="SCRIPT_TEXT" value="dotnet build &quot;$PROJECT_DIR$/QuickTransfer.slnx&quot; -c Debug -p:Platform=x64" />
     <option name="SCRIPT_OPTIONS" value="" />
     <option name="INDEPENDENT_SCRIPT_PATH" value="true" />
     <option name="SCRIPT_PATH" value="" />
