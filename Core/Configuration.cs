@@ -1,9 +1,14 @@
 using Dalamud.Configuration;
+using Dalamud.Plugin;
 namespace QuickTransfer;
 
 [Serializable]
 public sealed class Configuration : IPluginConfiguration
 {
+    [NonSerialized] private bool _pendingPersist;
+
+    [NonSerialized] private IDalamudPluginInterface? pluginInterface;
+
     public bool Enabled { get; set; } = true;
     // Default OFF (explicitly requested).
     public bool DebugMode { get; set; }
@@ -21,5 +26,26 @@ public sealed class Configuration : IPluginConfiguration
     public bool AutoConfirmVendorSell { get; set; } = true;
     public int Version { get; set; } = 3;
 
-    public void Save() => Svc.PluginInterface.SavePluginConfig(this);
+    public void Initialize(IDalamudPluginInterface pluginInterface) => this.pluginInterface = pluginInterface;
+
+    public void Save()
+    {
+        WriteToDisk();
+        _pendingPersist = false;
+    }
+
+    public void OnSettingChanged() => _pendingPersist = true;
+
+    public void PersistIfDirty()
+    {
+        if (!_pendingPersist)
+            return;
+
+        WriteToDisk();
+        _pendingPersist = false;
+    }
+
+    public void FlushToDisk() => WriteToDisk();
+
+    private void WriteToDisk() => pluginInterface!.SavePluginConfig(this);
 }
