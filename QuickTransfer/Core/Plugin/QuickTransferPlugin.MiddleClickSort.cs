@@ -598,7 +598,7 @@ public sealed unsafe partial class QuickTransferPlugin
 
     private void TryQueueMiddleClickSortFromHover(long now)
     {
-        if (!Configuration.Enabled || !Configuration.EnableMiddleClickSort)
+        if (!Configuration.Enabled || !ModifierBindings.IsMiddleClickConfigured(Configuration))
         {
             return;
         }
