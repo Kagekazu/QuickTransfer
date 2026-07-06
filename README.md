@@ -3,77 +3,107 @@
 
 # QuickTransfer
 
-Quick item transfer + split helpers for FFXIV inventory windows.
+Move items faster in FFXIV — without memorizing a dozen context menus.
 
 </div>
 
-QuickTransfer clicks **existing** context menu options for you. If an option is not present for the clicked item, nothing happens.
+QuickTransfer is a Dalamud plugin that **clicks the right context menu option for you**. Hold a modifier, right-click an item, and it picks the transfer, split, or sell action that makes sense for what's open. If that option isn't available, nothing happens — it won't force-move items on its own.
 
-## Modifiers
+Open settings anytime with **`/qt`**.
 
-Right-click actions use a **modifier + right-click** on an inventory slot. Defaults are Shift, Ctrl, and Alt — all customizable in `/qt` → **Settings → Keybindings**. Each action can also be turned off individually.
+---
 
-| Input                  | Default action                                                          |
-|------------------------|-------------------------------------------------------------------------|
-| **Shift + Right Click** | Default quick transfer (direction depends on what's open)              |
-| **Ctrl + Right Click**  | Armoury actions when Saddlebag, Retainer, or FC Chest is open          |
-| **Alt + Right Click**   | Split a stack in half (or remove half from FC Chest)                   |
-| **Middle Click**        | Sort the container, or organize the active FC Chest tab                |
+## What you get
 
-When multiple modifiers are held, priority is **Split → Armoury → Quick transfer** (regardless of which keys you bind). Brief taps still count — you don't need to hold through the menu.
+- **One shortcut for transfers** — saddlebags, armoury, retainer, trade, vendor sell, and FC chest deposits/withdrawals
+- **Quick armoury swaps** — place gear in the armoury chest or pull it back while another container is open
+- **Split stacks in one click** — halves a stack and confirms the quantity prompt for you
+- **Sort with middle-click** — sorts a container, or organizes your FC chest tab (stack + compact)
+- **Customizable keys** — rebind Shift/Ctrl/Alt or turn individual shortcuts off if they clash with other plugins
 
-## What Shift + Right Click does
+---
 
-| Open containers              | Inventory side                  | Other side                       |
-|------------------------------|---------------------------------|----------------------------------|
-| Inventory + Chocobo Saddlebag | Add All to Saddlebag           | Remove All from Saddlebag        |
-| Armoury + Chocobo Saddlebag  | Add All to Saddlebag            | Remove All from Saddlebag        |
-| Inventory + Armoury          | Place in Armoury Chest (gear)  | Return to Inventory              |
-| Inventory + Retainer         | Entrust to Retainer            | Retrieve from Retainer           |
-| Armoury + Retainer           | Entrust to Retainer            | Retrieve from Retainer           |
-| Retainer + Chocobo Saddlebag | Add All to Saddlebag (retainer)| Entrust to Retainer (saddlebag)  |
-| Trade window open            | Trade (auto-fills max qty)     | —                                |
-| Vendor shop open             | Sell                            | —                                |
-| FC Chest open                | Deposit to active tab          | Remove (withdraw)                |
+## Shortcuts (defaults)
 
-## Ctrl + Right Click
+Hold the modifier, **right-click** an item. Defaults shown below — change them in **Settings → Keybindings**.
 
-While a **Saddlebag**, **Retainer**, or **FC Chest** is open, prioritizes:
+| Shortcut | What it does |
+|----------|--------------|
+| **Shift + Right-click** | Quick transfer — direction depends on what's open (see table below) |
+| **Ctrl + Right-click** | Armoury actions while Saddlebag, Retainer, or FC Chest is open |
+| **Alt + Right-click** | Split a stack in half |
+| **Middle-click** | Sort the container, or organize the active FC chest tab |
 
-- Inventory gear → **Place in Armoury Chest**
-- Armoury gear → **Return to Inventory**
+**Tips:**
+- A quick tap on the modifier still counts — you don't need to hold it through the whole menu
+- If two shortcuts share the same key, priority is **Split → Armoury → Quick transfer**
+- Middle-click can use your side mouse buttons too (Mouse 4 / 5)
 
-## Alt + Right Click
+---
 
-Selects the existing **Split** menu entry on a stackable item. With auto-confirm on, fills **half** and confirms automatically.
+## Quick transfer (Shift + Right-click by default)
 
-## Middle Click
+What happens depends on which windows you have open:
 
-- Normal containers: auto-selects **Sort** from the item menu (the menu doesn't pop).
-- FC Chest: runs an **organize pass** on the active tab (auto-stack + compact). The FC Chest item menu has no Sort entry.
+| You have open… | Click an item in… | Result |
+|----------------|-------------------|--------|
+| Inventory + Chocobo Saddlebag | Inventory | Add All to Saddlebag |
+| Inventory + Chocobo Saddlebag | Saddlebag | Remove All from Saddlebag |
+| Inventory + Armoury | Inventory (gear) | Place in Armoury Chest |
+| Inventory + Armoury | Armoury | Return to Inventory |
+| Inventory + Retainer | Inventory | Entrust to Retainer |
+| Inventory + Retainer | Retainer | Retrieve from Retainer |
+| Retainer + Chocobo Saddlebag | Retainer | Entrust to Retainer |
+| Retainer + Chocobo Saddlebag | Saddlebag | Add All to Saddlebag |
+| Trade window | Inventory | Trade (fills max quantity) |
+| Vendor shop | Inventory | Sell |
+| FC Chest | Inventory / Armoury / Crystals | Deposit to the active tab |
+| FC Chest | The chest itself | Remove (withdraw) |
 
-## Quantity dialogs
+---
 
-Trade and Split always auto-confirm. Vendor Sell and FC Chest quantity prompts auto-confirm when their respective toggles are on. Localized prompts are handled — the plugin recognises the dialog by context (open addon + expected max), not by English text.
+## Armoury shortcut (Ctrl + Right-click by default)
 
-## Settings
+While a **Saddlebag**, **Retainer**, or **FC Chest** is open:
 
-| Setting                              | Default | Description                                                              |
-|--------------------------------------|---------|--------------------------------------------------------------------------|
-| Plugin enabled                       | On      | Master switch                                                            |
-| Quick transfer binding               | On, Shift | Default transfer modifier + right-click                                |
-| Armoury binding                      | On, Ctrl | Armoury modifier + right-click                                          |
-| Split binding                        | On, Alt  | Split modifier + right-click                                            |
-| Middle-click buttons                 | MMB + side buttons | Which mouse buttons trigger sort / FC organize              |
-| Modifier latch                       | 180 ms  | How long a brief modifier tap still counts                             |
-| Transfer cooldown                    | 200 ms  | Minimum time between right-click actions                                 |
-| Middle-click sort                    | On      | MMB sorts container / organizes FC Chest tab                             |
-| FC Chest helpers                     | On      | Shift/Ctrl/Alt on Inventory ↔ FC Chest                                   |
-| FC Chest middle-click organize       | On      | MMB runs stack + compact on the active FC Chest tab                      |
-| FC Chest auto-confirm quantity       | On      | Auto-fills and confirms store / remove / split prompts                   |
-| FC Chest compartments                | 3       | How many FC item tabs are unlocked (3–5)                                 |
-| Vendor quick sell                    | On      | Shift + Right Click selects Sell at a vendor                             |
-| Vendor auto-confirm sell             | On      | Auto-fills "How many?" and "Are you certain?" prompts                    |
-| Debug mode                           | Off     | Logs detailed actions to chat (troubleshooting only)                     |
+- Gear in your inventory → **Place in Armoury Chest**
+- Gear in your armoury → **Return to Inventory**
 
-Command: `/qt` opens the settings window.
+---
+
+## Split (Alt + Right-click by default)
+
+Splits a stackable item in half. Quantity prompts are filled and confirmed automatically.
+
+On the **FC Chest**, removes half of a stack instead.
+
+---
+
+## Middle-click sort & organize
+
+- **Normal inventories** (inventory, saddlebag, retainer, etc.) — picks **Sort** without popping the menu
+- **FC Chest** — runs an organize pass on the **active tab** (stacks items and compacts empty slots). The FC chest menu doesn't have a Sort option, so this is a separate helper
+
+---
+
+## Settings worth knowing
+
+| Setting | What it does |
+|---------|--------------|
+| **Keybindings** | Change modifiers, turn shortcuts on/off, pick middle-click buttons |
+| **FC Chest helpers** | Deposit/withdraw with quick transfer, middle-click organize, auto-confirm quantities |
+| **Vendor quick sell** | Quick transfer selects Sell at vendors; optional auto-confirm for sell dialogs |
+| **Transfer cooldown** | Minimum gap between actions — raise this if clicks feel too fast or get skipped |
+
+Trade and Split always auto-confirm quantity dialogs. Vendor sell and FC chest prompts auto-confirm when their toggles are on. Works with non-English clients.
+
+---
+
+## Clashes with other plugins?
+
+If Shift/Ctrl/Alt is already taken by AutoRetainer, Pandora's Box, MarketBuddy, or similar, open **`/qt` → Settings → Keybindings** and either:
+
+1. **Rebind** QuickTransfer's modifiers to keys you don't use elsewhere, or
+2. **Turn off** the shortcuts you don't need
+
+You can keep FC chest organize on middle-click even if you disable the right-click transfers.
