@@ -11,14 +11,16 @@ QuickTransfer clicks **existing** context menu options for you. If an option is 
 
 ## Modifiers
 
-| Input                  | Action                                                                  |
+Right-click actions use a **modifier + right-click** on an inventory slot. Defaults are Shift, Ctrl, and Alt — all customizable in `/qt` → **Settings → Keybindings**. Each action can also be turned off individually.
+
+| Input                  | Default action                                                          |
 |------------------------|-------------------------------------------------------------------------|
 | **Shift + Right Click** | Default quick transfer (direction depends on what's open)              |
 | **Ctrl + Right Click**  | Armoury actions when Saddlebag, Retainer, or FC Chest is open          |
 | **Alt + Right Click**   | Split a stack in half (or remove half from FC Chest)                   |
 | **Middle Click**        | Sort the container, or organize the active FC Chest tab                |
 
-When multiple modifiers are held, priority is **Alt → Ctrl → Shift**. Brief taps still count — you don't need to hold through the menu.
+When multiple modifiers are held, priority is **Split → Armoury → Quick transfer** (regardless of which keys you bind). Brief taps still count — you don't need to hold through the menu.
 
 ## What Shift + Right Click does
 
@@ -59,6 +61,11 @@ Trade and Split always auto-confirm. Vendor Sell and FC Chest quantity prompts a
 | Setting                              | Default | Description                                                              |
 |--------------------------------------|---------|--------------------------------------------------------------------------|
 | Plugin enabled                       | On      | Master switch                                                            |
+| Quick transfer binding               | On, Shift | Default transfer modifier + right-click                                |
+| Armoury binding                      | On, Ctrl | Armoury modifier + right-click                                          |
+| Split binding                        | On, Alt  | Split modifier + right-click                                            |
+| Middle-click buttons                 | MMB + side buttons | Which mouse buttons trigger sort / FC organize              |
+| Modifier latch                       | 180 ms  | How long a brief modifier tap still counts                             |
 | Transfer cooldown                    | 200 ms  | Minimum time between right-click actions                                 |
 | Middle-click sort                    | On      | MMB sorts container / organizes FC Chest tab                             |
 | FC Chest helpers                     | On      | Shift/Ctrl/Alt on Inventory ↔ FC Chest                                   |

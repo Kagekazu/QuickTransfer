@@ -1,5 +1,7 @@
+using Dalamud.Game.ClientState.Keys;
 using Dalamud.Interface;
 using Dalamud.Interface.Windowing;
+using QuickTransfer.Framework;
 using System.Diagnostics;
 using System.Numerics;
 namespace QuickTransfer;
@@ -109,10 +111,61 @@ public class PluginUI : Window
     {
         ImGui.Spacing();
 
-        if (ImGui.CollapsingHeader("Middle-click", ImGuiTreeNodeFlags.DefaultOpen))
+        if (ImGui.CollapsingHeader("Keybindings", ImGuiTreeNodeFlags.DefaultOpen))
         {
             Indent(() =>
             {
+                DrawKeybindingRow(
+                    "Quick transfer",
+                    config.EnableShiftQuickTransfer,
+                    config.ShiftActionModifier,
+                    value => config.EnableShiftQuickTransfer = value,
+                    value => config.ShiftActionModifier = value,
+                    "Default transfer direction (saddlebag, retainer, trade, sell, FC chest, etc.).");
+
+                DrawKeybindingRow(
+                    "Armoury actions",
+                    config.EnableCtrlArmoury,
+                    config.CtrlActionModifier,
+                    value => config.EnableCtrlArmoury = value,
+                    value => config.CtrlActionModifier = value,
+                    "Place in Armoury Chest / Return to Inventory while Saddlebag, Retainer, or FC chest is open.");
+
+                DrawKeybindingRow(
+                    "Split stack",
+                    config.EnableAltSplit,
+                    config.AltActionModifier,
+                    value => config.EnableAltSplit = value,
+                    value => config.AltActionModifier = value,
+                    "Split a stack in half (or remove half from FC chest).");
+
+                ImGui.Spacing();
+                ImGui.Text("Middle-click buttons");
+                Hint("Choose which mouse buttons trigger sort / FC chest organize. Disable all to turn off middle-click entirely.");
+
+                var mmb = config.MiddleClickUseMButton;
+                if (ImGui.Checkbox("Middle mouse button", ref mmb))
+                {
+                    config.MiddleClickUseMButton = mmb;
+                    config.OnSettingChanged();
+                }
+
+                var x1 = config.MiddleClickUseXButton1;
+                if (ImGui.Checkbox("Mouse side button 1 (Mouse 4)", ref x1))
+                {
+                    config.MiddleClickUseXButton1 = x1;
+                    config.OnSettingChanged();
+                }
+
+                var x2 = config.MiddleClickUseXButton2;
+                if (ImGui.Checkbox("Mouse side button 2 (Mouse 5)", ref x2))
+                {
+                    config.MiddleClickUseXButton2 = x2;
+                    config.OnSettingChanged();
+                }
+
+                ImGui.Spacing();
+
                 var mmbSort = config.EnableMiddleClickSort;
                 if (ImGui.Checkbox("Sort inventories on middle-click", ref mmbSort))
                 {
@@ -120,7 +173,31 @@ public class PluginUI : Window
                     config.OnSettingChanged();
                 }
 
-                Hint("Middle-click an item to auto-select Sort when the container supports it.");
+                Hint("Middle-click an item to auto-select Sort when the container supports it, or FC chest organize when enabled.");
+
+                ImGui.Spacing();
+                ImGui.Text("Modifier latch");
+                ImGui.SetNextItemWidth(220);
+                var latchMs = config.ModifierLatchMs;
+                if (ImGui.SliderInt("##ModifierLatchMs", ref latchMs, 0, 500, "%d ms"))
+                {
+                    config.ModifierLatchMs = latchMs;
+                    config.OnSettingChanged();
+                }
+
+                Hint("Brief modifier taps still count for this long after release.");
+
+                if (ModifierBindings.HasModifierConflict(config, out var conflict))
+                {
+                    ImGui.TextColored(WarningColor, conflict);
+                    ImGui.TextColored(WarningColor, "When modifiers overlap, priority is Split → Armoury → Quick transfer.");
+                }
+
+                if (ImGui.Button("Reset keybindings to defaults"))
+                {
+                    config.ResetKeybindingsToDefaults();
+                    config.OnSettingChanged();
+                }
             });
         }
 
@@ -135,7 +212,7 @@ public class PluginUI : Window
                     config.OnSettingChanged();
                 }
 
-                Hint("Shift+right-click deposits from inventory/armoury/crystals; Shift+right-click the chest withdraws.");
+                Hint("Quick-transfer modifier + right-click deposits from inventory/armoury/crystals; same on the chest withdraws.");
 
                 ImGui.Spacing();
                 using (ImRaii.Disabled(!config.EnableCompanyChest))
@@ -195,7 +272,7 @@ public class PluginUI : Window
                     config.OnSettingChanged();
                 }
 
-                Hint("With a vendor shop open, Shift+right-click selects Sell.");
+                Hint("With a vendor shop open, quick-transfer modifier + right-click selects Sell.");
 
                 using (ImRaii.Disabled(!config.EnableVendorQuickSell))
                 {
@@ -259,14 +336,15 @@ public class PluginUI : Window
                 Bullet("Inventory + Armoury", "Place in Armoury Chest / Return to Inventory");
                 Bullet("Inventory + Retainer", "Entrust to Retainer / Retrieve from Retainer");
                 Bullet("Retainer + Saddlebags", "Add All to Saddlebag / Entrust to Retainer");
-                Bullet("Trade window open", "Shift → Trade (auto-confirms stack size when enabled)");
-                Bullet("Vendor shop open", "Shift → Sell");
-                Bullet("FC chest open", "Shift on inventory/crystals → deposit to active tab; Shift on chest → Remove");
+                Bullet("Trade window open", "Quick transfer → Trade (auto-confirms stack size when enabled)");
+                Bullet("Vendor shop open", "Quick transfer → Sell");
+                Bullet("FC chest open", "Quick transfer on inventory/crystals → deposit to active tab; on chest → Remove");
             });
         }
 
         ImGui.Spacing();
-        ImGui.TextColored(MutedColor, "Tip: Brief Shift/Ctrl/Alt taps still count — you do not need to hold through the whole menu.");
+        ImGui.TextColored(MutedColor, "Tip: Brief modifier taps still count — you do not need to hold through the whole menu.");
+        ImGui.TextColored(MutedColor, "Rebind modifiers in Settings → Keybindings if they clash with other plugins.");
         ImGui.TextColored(MutedColor, "Command: /qt");
     }
 
@@ -278,14 +356,94 @@ public class PluginUI : Window
             return;
         }
 
-        ImGui.TableSetupColumn("Input", ImGuiTableColumnFlags.WidthFixed, 120);
+        ImGui.TableSetupColumn("Input", ImGuiTableColumnFlags.WidthFixed, 168);
         ImGui.TableSetupColumn("Action", ImGuiTableColumnFlags.WidthStretch);
         ImGui.TableHeadersRow();
 
-        TableRow("Shift + Right-click", "Default quick transfer (direction depends on what's open)");
-        TableRow("Ctrl + Right-click", "Armoury actions when Saddlebag, Retainer, or FC chest is open");
-        TableRow("Alt + Right-click", "Split stack in half (or remove half from FC chest)");
-        TableRow("Middle-click", "Sort container, or FC chest organize if enabled");
+        TableRow(
+            config.EnableShiftQuickTransfer
+                ? ModifierBindings.FormatRightClickBinding(config.ShiftActionModifier)
+                : "(disabled)",
+            "Default quick transfer (direction depends on what's open)");
+        TableRow(
+            config.EnableCtrlArmoury
+                ? ModifierBindings.FormatRightClickBinding(config.CtrlActionModifier)
+                : "(disabled)",
+            "Armoury actions when Saddlebag, Retainer, or FC chest is open");
+        TableRow(
+            config.EnableAltSplit
+                ? ModifierBindings.FormatRightClickBinding(config.AltActionModifier)
+                : "(disabled)",
+            "Split stack in half (or remove half from FC chest)");
+        TableRow(
+            ModifierBindings.IsMiddleClickConfigured(config)
+                ? ModifierBindings.FormatMiddleClickBinding(config)
+                : "(disabled)",
+            "Sort container, or FC chest organize if enabled");
+    }
+
+    private void DrawKeybindingRow(
+        string label,
+        bool enabled,
+        VirtualKey modifier,
+        Action<bool> setEnabled,
+        Action<VirtualKey> setModifier,
+        string hint)
+    {
+        var rowEnabled = enabled;
+        if (ImGui.Checkbox(label, ref rowEnabled))
+        {
+            setEnabled(rowEnabled);
+            config.OnSettingChanged();
+        }
+
+        using (ImRaii.Disabled(!rowEnabled))
+        {
+            ImGui.SameLine(220);
+            ImGui.SetNextItemWidth(120);
+            if (DrawModifierCombo($"##{label}Modifier", modifier, setModifier))
+            {
+                config.OnSettingChanged();
+            }
+        }
+
+        Hint(hint);
+    }
+
+    private bool DrawModifierCombo(string id, VirtualKey modifier, Action<VirtualKey> setModifier)
+    {
+        var rowModifier = ModifierBindings.SanitizeModifier(modifier);
+        if (rowModifier != modifier)
+        {
+            setModifier(rowModifier);
+            config.OnSettingChanged();
+        }
+
+        var currentIndex = Array.IndexOf(ModifierBindings.AllowedModifiers, rowModifier);
+        var preview = ModifierBindings.GetDisplayName(rowModifier);
+        var changed = false;
+        if (ImGui.BeginCombo(id, preview))
+        {
+            for (var i = 0; i < ModifierBindings.AllowedModifiers.Length; i++)
+            {
+                var option = ModifierBindings.AllowedModifiers[i];
+                var selected = i == currentIndex;
+                if (ImGui.Selectable(ModifierBindings.GetDisplayName(option), selected))
+                {
+                    setModifier(option);
+                    changed = true;
+                }
+
+                if (selected)
+                {
+                    ImGui.SetItemDefaultFocus();
+                }
+            }
+
+            ImGui.EndCombo();
+        }
+
+        return changed;
     }
 
     private static void TableRow(string input, string action)
