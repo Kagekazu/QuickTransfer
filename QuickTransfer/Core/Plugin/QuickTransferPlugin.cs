@@ -14,6 +14,7 @@ using FFXIVClientStructs.FFXIV.Component.GUI;
 using System.Runtime.InteropServices;
 using AtkValueType = FFXIVClientStructs.FFXIV.Component.GUI.AtkValueType;
 using AutoContextAction = QuickTransfer.Framework.ContextMenuHandler.AutoContextAction;
+using ModifierBindings = QuickTransfer.Framework.ModifierBindings;
 using ModifierMode = QuickTransfer.Framework.ContextMenuHandler.ModifierMode;
 
 namespace QuickTransfer;
@@ -119,7 +120,13 @@ public sealed unsafe partial class QuickTransferPlugin : IDalamudPlugin
                 Configuration.Version = 3;
                 Configuration.Save();
             }
-            else if (Configuration.Version > 3)
+            else if (Configuration.Version < 4)
+            {
+                // New v4 fields use property defaults when absent from saved JSON; no reset needed.
+                Configuration.Version = 4;
+                Configuration.Save();
+            }
+            else if (Configuration.Version > 4)
             {
                 // If the user downgrades, don't overwrite their config; just keep their stored values.
             }
@@ -131,6 +138,8 @@ public sealed unsafe partial class QuickTransferPlugin : IDalamudPlugin
         {
             // ignore
         }
+
+        Configuration.SanitizeKeybindings();
 
         pluginUi = new(Configuration);
         windowSystem.AddWindow(pluginUi);
@@ -511,16 +520,16 @@ public sealed unsafe partial class QuickTransferPlugin : IDalamudPlugin
 
         // If a "middle-ish" button is pressed (rising edge), queue a sort using the last hovered slot.
         // This works even if the client doesn't generate a distinct UI click event on this build.
-        var middleEdge = mDown && !prevM || x1Down && !prevX1 || x2Down && !prevX2;
+        var middleEdge = ModifierBindings.IsMiddleClickEdge(mDown, prevM, x1Down, prevX1, x2Down, prevX2, Configuration);
         if (middleEdge)
         {
-            if (Configuration.EnableMiddleClickSort)
+            if (ModifierBindings.IsMiddleClickConfigured(Configuration))
             {
                 TryQueueMiddleClickSortFromHover(now);
             }
             else if (Configuration.DebugMode)
             {
-                Svc.Log.Information("[QuickTransfer] (MMB) Press detected, but EnableMiddleClickSort is disabled.");
+                Svc.Log.Information("[QuickTransfer] (MMB) Press detected, but middle-click sort is disabled or no mouse buttons are selected.");
             }
         }
 
@@ -1180,7 +1189,7 @@ public sealed unsafe partial class QuickTransferPlugin : IDalamudPlugin
     {
         try
         {
-            if (!Configuration.Enabled || !Configuration.EnableMiddleClickSort)
+            if (!Configuration.Enabled || !ModifierBindings.IsMiddleClickConfigured(Configuration))
             {
                 return;
             }
@@ -1360,9 +1369,9 @@ public sealed unsafe partial class QuickTransferPlugin : IDalamudPlugin
                 // ignore
             }
 
-            var asyncMiddleDown = CursorHoverHelpers.IsMouseButtonDown(0x04); // VK_MBUTTON
-            var isMiddleByMask = (mouseButtonId & 0x04) != 0 || (dragDropMouseButtonId & 0x04) != 0;
-            var isMiddle = asyncMiddleDown || isMiddleByMask || middleDown == true;
+            var asyncMiddleDown = ModifierBindings.IsConfiguredMiddleClickDown(Configuration);
+            var isMiddleByMask = ModifierBindings.IsMiddleClickEventMask(mouseButtonId, dragDropMouseButtonId, Configuration);
+            var isMiddle = ModifierBindings.IsMiddleClickPressed(Configuration, mouseButtonId, dragDropMouseButtonId, middleDown);
 
             // Always log (rate-limited) in DebugMode so we can see which event types fire on MMB for this client.
             if (Configuration.DebugMode && now - lastReceiveEventDebugLogMs >= 250)
@@ -1426,15 +1435,35 @@ public sealed unsafe partial class QuickTransferPlugin : IDalamudPlugin
 
     private ModifierMode? GetModifierModeLatched(long nowMs)
     {
-        const int latchWindowMs = 180;
-        if (Svc.KeyState[VirtualKey.MENU] || nowMs - lastAltSeenMs <= latchWindowMs)
+        if (Configuration.EnableAltSplit && IsModifierActive(Configuration.AltActionModifier, nowMs))
         {
             return ModifierMode.Alt;
         }
-        return Svc.KeyState[VirtualKey.CONTROL] || nowMs - lastCtrlSeenMs <= latchWindowMs
-            ? ModifierMode.Ctrl
-            : Svc.KeyState[VirtualKey.SHIFT] || nowMs - lastShiftSeenMs <= latchWindowMs
-                ? ModifierMode.Shift
-                : null;
+
+        if (Configuration.EnableCtrlArmoury && IsModifierActive(Configuration.CtrlActionModifier, nowMs))
+        {
+            return ModifierMode.Ctrl;
+        }
+
+        return Configuration.EnableShiftQuickTransfer && IsModifierActive(Configuration.ShiftActionModifier, nowMs)
+            ? ModifierMode.Shift
+            : null;
+    }
+
+    private bool IsModifierActive(VirtualKey key, long nowMs)
+    {
+        if (Svc.KeyState[key])
+        {
+            return true;
+        }
+
+        var latchWindowMs = Configuration.ModifierLatchMs;
+        return key switch
+        {
+            VirtualKey.SHIFT => nowMs - lastShiftSeenMs <= latchWindowMs,
+            VirtualKey.CONTROL => nowMs - lastCtrlSeenMs <= latchWindowMs,
+            VirtualKey.MENU => nowMs - lastAltSeenMs <= latchWindowMs,
+            _ => false
+        };
     }
 }

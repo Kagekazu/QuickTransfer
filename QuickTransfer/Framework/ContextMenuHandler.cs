@@ -117,11 +117,12 @@ internal static unsafe class ContextMenuHandler
             /* ignore */
         }
 
-        if (addon == null)
+        if (addon is null)
         {
             addon = AddonHelpers.GetAddonByName(QuickTransferConstants.ContextMenuAddonName);
         }
-        return addon != null && TryAutoSelectAndClose(
+
+        return addon is not null && TryAutoSelectAndClose(
             agent,
             addon,
             mode,
@@ -139,7 +140,7 @@ internal static unsafe class ContextMenuHandler
             if (agentAddonId != 0)
             {
                 var addon = AddonHelpers.GetAddonById(agentAddonId);
-                if (addon != null)
+                if (addon is not null)
                 {
                     CloseContextMenuAddon(agent, addon);
                     return;
@@ -154,7 +155,7 @@ internal static unsafe class ContextMenuHandler
         try
         {
             var cm = AddonHelpers.GetAddonByName(QuickTransferConstants.ContextMenuAddonName);
-            if (cm != null)
+            if (cm is not null)
             {
                 CloseContextMenuAddon(agent, cm);
             }

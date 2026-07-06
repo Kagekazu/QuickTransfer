@@ -1,4 +1,5 @@
 using Dalamud.Configuration;
+using Dalamud.Game.ClientState.Keys;
 using Dalamud.Plugin;
 namespace QuickTransfer;
 
@@ -24,7 +25,42 @@ public sealed class Configuration : IPluginConfiguration
 
     public bool EnableVendorQuickSell { get; set; } = true;
     public bool AutoConfirmVendorSell { get; set; } = true;
-    public int Version { get; set; } = 3;
+
+    public bool EnableShiftQuickTransfer { get; set; } = true;
+    public bool EnableCtrlArmoury { get; set; } = true;
+    public bool EnableAltSplit { get; set; } = true;
+    public VirtualKey ShiftActionModifier { get; set; } = VirtualKey.SHIFT;
+    public VirtualKey CtrlActionModifier { get; set; } = VirtualKey.CONTROL;
+    public VirtualKey AltActionModifier { get; set; } = VirtualKey.MENU;
+    public int ModifierLatchMs { get; set; } = 180;
+    public bool MiddleClickUseMButton { get; set; } = true;
+    public bool MiddleClickUseXButton1 { get; set; } = true;
+    public bool MiddleClickUseXButton2 { get; set; } = true;
+
+    public int Version { get; set; } = 4;
+
+    public void ResetKeybindingsToDefaults()
+    {
+        EnableShiftQuickTransfer = true;
+        EnableCtrlArmoury = true;
+        EnableAltSplit = true;
+        ShiftActionModifier = VirtualKey.SHIFT;
+        CtrlActionModifier = VirtualKey.CONTROL;
+        AltActionModifier = VirtualKey.MENU;
+        ModifierLatchMs = 180;
+        MiddleClickUseMButton = true;
+        MiddleClickUseXButton1 = true;
+        MiddleClickUseXButton2 = true;
+        EnableMiddleClickSort = true;
+    }
+
+    public void SanitizeKeybindings()
+    {
+        ShiftActionModifier = ModifierBindings.SanitizeModifier(ShiftActionModifier);
+        CtrlActionModifier = ModifierBindings.SanitizeModifier(CtrlActionModifier);
+        AltActionModifier = ModifierBindings.SanitizeModifier(AltActionModifier);
+        ModifierLatchMs = Math.Clamp(ModifierLatchMs, 0, 500);
+    }
 
     public void Initialize(IDalamudPluginInterface pluginInterface) => this.pluginInterface = pluginInterface;
 
