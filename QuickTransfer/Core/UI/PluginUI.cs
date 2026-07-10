@@ -175,6 +175,15 @@ public class PluginUI : Window
 
                 Hint("Middle-click an item to auto-select Sort when the container supports it, or FC chest organize when enabled.");
 
+                var yieldRetainerSell = config.YieldQuickTransferOnRetainerSellList;
+                if (ImGui.Checkbox("Yield quick transfer on retainer sell list", ref yieldRetainerSell))
+                {
+                    config.YieldQuickTransferOnRetainerSellList = yieldRetainerSell;
+                    config.OnSettingChanged();
+                }
+
+                Hint("When the retainer market sell list is open, quick transfer won't intercept inventory clicks — so plugins like MarketBuddy can use the same modifier. Detected by UI addon, not menu text.");
+
                 ImGui.Spacing();
                 ImGui.Text("Modifier latch");
                 ImGui.SetNextItemWidth(220);

@@ -119,10 +119,35 @@ internal static unsafe class InventoryHelpers
     public static bool IsSaddlebagOpen()
         => IsAddonVisibleAnyIndex("InventoryBuddy") || IsAddonVisibleAnyIndex("InventoryBuddy2");
 
+    public static bool IsRetainerSellListOpen()
+        => IsAddonVisibleAnyIndex(QuickTransferConstants.RetainerSellListAddonName);
+
     public static bool IsRetainerOpen()
         => IsAddonVisibleAnyIndex("RetainerGrid0") ||
-           IsAddonVisibleAnyIndex("RetainerSellList") ||
+           IsRetainerSellListOpen() ||
            IsAddonVisibleAnyIndex("RetainerGrid");
+
+    public static bool IsRetainerMarketListingSourceType(InventoryType inventoryType)
+        => IsPlayerInventoryType(inventoryType) ||
+           IsArmouryType(inventoryType) ||
+           IsPlayerCrystalsType(inventoryType) ||
+           IsSaddlebagType(inventoryType);
+
+    public static bool ShouldYieldQuickTransferForRetainerMarket(
+        Configuration configuration,
+        ContextMenuHandler.ModifierMode mode,
+        InventoryType inventoryType)
+    {
+        if (!configuration.YieldQuickTransferOnRetainerSellList ||
+            !configuration.EnableShiftQuickTransfer ||
+            mode != ContextMenuHandler.ModifierMode.Shift ||
+            !IsRetainerSellListOpen())
+        {
+            return false;
+        }
+
+        return IsRetainerMarketListingSourceType(inventoryType);
+    }
 
     public static bool IsCompanyChestOpen()
         => IsAddonVisibleAnyIndex("FreeCompanyChest");

@@ -9,6 +9,7 @@ internal static class QuickTransferConstants
     // Real UI heap pointers in a 64-bit process are typically well above 4GB.
     public const long MinLikelyPointer = 0x1_0000_0000;
 
+    public const string RetainerSellListAddonName = "RetainerSellList";
     public const string FreeCompanyChestAddonName = "FreeCompanyChest";
     public const string InputNumericAddonName = "InputNumeric";
     public const string ContextMenuAddonName = "ContextMenu";
@@ -31,7 +32,7 @@ internal static class QuickTransferConstants
         "InventoryBuddy2",
         ..ArmouryAddonNames,
         "RetainerGrid0",
-        "RetainerSellList",
+        RetainerSellListAddonName,
         "RetainerGrid",
         FreeCompanyChestAddonName
     ];
