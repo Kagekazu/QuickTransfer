@@ -1,109 +1,70 @@
-<div align="center">
-<img src="https://raw.githubusercontent.com/Kagekazu/QuickTransfer/main/images/icon.png" alt="QuickTransfer" width="15%">
-
 # QuickTransfer
 
-Move items faster in FFXIV — without memorizing a dozen context menus.
+Move items faster in FFXIV — hold a modifier, right-click an item, and
+QuickTransfer picks the right context menu action for whatever you have open.
+If that option is not there, nothing happens.
 
-</div>
+## Shortcuts
 
-QuickTransfer is a Dalamud plugin that **clicks the right context menu option for you**. Hold a modifier, right-click an item, and it picks the transfer, split, or sell action that makes sense for what's open. If that option isn't available, nothing happens — it won't force-move items on its own.
+Defaults below. Change modifiers or turn actions off in **Settings → Keybindings**
+(`/qt`).
 
-Open settings anytime with **`/qt`**.
+- **Quick transfer** — modifier + right-click on an item. Sends gear and stacks
+  between inventory, saddlebag, armoury, retainer, trade, vendors, and FC chest
+  depending on which windows are open.
+- **Armoury** — while saddlebag, retainer, or FC chest is open: place gear in the
+  armoury chest from inventory, or return armoury gear to inventory.
+- **Split** — modifier + right-click on a stack to split it in half. Quantity
+  prompts are filled and confirmed for you.
+- **Middle-click** — sort a container, or organize the active FC chest tab (stack
+  and compact). Side mouse buttons work too.
 
----
+Default modifiers: **Shift** (quick transfer), **Ctrl** (armoury), **Alt**
+(split). A quick tap on the modifier still counts — you do not need to hold it
+through the menu.
 
-## What you get
+## What it handles
 
-- **One shortcut for transfers** — saddlebags, armoury, retainer, trade, vendor sell, and FC chest deposits/withdrawals
-- **Quick armoury swaps** — place gear in the armoury chest or pull it back while another container is open
-- **Split stacks in one click** — halves a stack and confirms the quantity prompt for you
-- **Sort with middle-click** — sorts a container, or organizes your FC chest tab (stack + compact)
-- **Customizable keys** — rebind Shift/Ctrl/Alt or turn individual shortcuts off if they clash with other plugins
+QuickTransfer only clicks options that already exist in the game menu — it does
+not move items on its own.
 
----
+Common quick-transfer cases:
 
-## Shortcuts (defaults)
+- Inventory ↔ chocobo saddlebag (add all / remove all)
+- Inventory ↔ armoury (place gear / return to inventory)
+- Inventory ↔ retainer (entrust / retrieve)
+- Trade window open → trade (fills max quantity)
+- Vendor open → sell
+- FC chest open → deposit from inventory, armoury, or crystals; withdraw from the
+  chest itself
 
-Hold the modifier, **right-click** an item. Defaults shown below — change them in **Settings → Keybindings**.
+FC chest middle-click organize is separate from sort — the FC chest menu has no
+Sort entry.
 
-| Shortcut | What it does |
-|----------|--------------|
-| **Shift + Right-click** | Quick transfer — direction depends on what's open (see table below) |
-| **Ctrl + Right-click** | Armoury actions while Saddlebag, Retainer, or FC Chest is open |
-| **Alt + Right-click** | Split a stack in half |
-| **Middle-click** | Sort the container, or organize the active FC chest tab |
+## Settings
 
-**Tips:**
-- A quick tap on the modifier still counts — you don't need to hold it through the whole menu
-- If two shortcuts share the same key, priority is **Split → Armoury → Quick transfer**
-- Middle-click can use your side mouse buttons too (Mouse 4 / 5)
+- **Keybindings** — rebind Shift/Ctrl/Alt, disable individual shortcuts, choose
+  middle-click buttons, adjust modifier latch.
+- **FC Chest** — deposit/withdraw helpers, middle-click organize, auto-confirm
+  quantity dialogs, compartment count.
+- **Vendor quick sell** — quick transfer selects Sell; optional auto-confirm for
+  sell dialogs.
 
----
+If shortcuts clash with other plugins, rebind or turn off the actions you do
+not need in Keybindings.
 
-## Quick transfer (Shift + Right-click by default)
+## Install
 
-What happens depends on which windows you have open:
+Add this custom plugin repository in Dalamud:
 
-| You have open… | Click an item in… | Result |
-|----------------|-------------------|--------|
-| Inventory + Chocobo Saddlebag | Inventory | Add All to Saddlebag |
-| Inventory + Chocobo Saddlebag | Saddlebag | Remove All from Saddlebag |
-| Inventory + Armoury | Inventory (gear) | Place in Armoury Chest |
-| Inventory + Armoury | Armoury | Return to Inventory |
-| Inventory + Retainer | Inventory | Entrust to Retainer |
-| Inventory + Retainer | Retainer | Retrieve from Retainer |
-| Retainer + Chocobo Saddlebag | Retainer | Entrust to Retainer |
-| Retainer + Chocobo Saddlebag | Saddlebag | Add All to Saddlebag |
-| Trade window | Inventory | Trade (fills max quantity) |
-| Vendor shop | Inventory | Sell |
-| FC Chest | Inventory / Armoury / Crystals | Deposit to the active tab |
-| FC Chest | The chest itself | Remove (withdraw) |
+`https://puni.sh/api/repository/kage`
 
----
+Then install **QuickTransfer** from the plugin installer.
 
-## Armoury shortcut (Ctrl + Right-click by default)
+## Getting started
 
-While a **Saddlebag**, **Retainer**, or **FC Chest** is open:
-
-- Gear in your inventory → **Place in Armoury Chest**
-- Gear in your armoury → **Return to Inventory**
-
----
-
-## Split (Alt + Right-click by default)
-
-Splits a stackable item in half. Quantity prompts are filled and confirmed automatically.
-
-On the **FC Chest**, removes half of a stack instead.
-
----
-
-## Middle-click sort & organize
-
-- **Normal inventories** (inventory, saddlebag, retainer, etc.) — picks **Sort** without popping the menu
-- **FC Chest** — runs an organize pass on the **active tab** (stacks items and compacts empty slots). The FC chest menu doesn't have a Sort option, so this is a separate helper
-
----
-
-## Settings worth knowing
-
-| Setting | What it does |
-|---------|--------------|
-| **Keybindings** | Change modifiers, turn shortcuts on/off, pick middle-click buttons |
-| **FC Chest helpers** | Deposit/withdraw with quick transfer, middle-click organize, auto-confirm quantities |
-| **Vendor quick sell** | Quick transfer selects Sell at vendors; optional auto-confirm for sell dialogs |
-| **Transfer cooldown** | Minimum gap between actions — raise this if clicks feel too fast or get skipped |
-
-Trade and Split always auto-confirm quantity dialogs. Vendor sell and FC chest prompts auto-confirm when their toggles are on. Works with non-English clients.
-
----
-
-## Clashes with other plugins?
-
-If Shift/Ctrl/Alt is already taken by AutoRetainer, Pandora's Box, MarketBuddy, or similar, open **`/qt` → Settings → Keybindings** and either:
-
-1. **Rebind** QuickTransfer's modifiers to keys you don't use elsewhere, or
-2. **Turn off** the shortcuts you don't need
-
-You can keep FC chest organize on middle-click even if you disable the right-click transfers.
+1. Open QuickTransfer with `/qt`.
+2. Check **Controls** for your current bindings, **Settings → Keybindings** to
+   customize them.
+3. Hold your quick-transfer modifier and right-click an item with the target
+   container open (saddlebag, retainer, armoury, vendor, etc.).

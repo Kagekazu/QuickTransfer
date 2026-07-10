@@ -126,7 +126,12 @@ public sealed unsafe partial class QuickTransferPlugin : IDalamudPlugin
                 Configuration.Version = 4;
                 Configuration.Save();
             }
-            else if (Configuration.Version > 4)
+            else if (Configuration.Version < 5)
+            {
+                Configuration.Version = 5;
+                Configuration.Save();
+            }
+            else if (Configuration.Version > 5)
             {
                 // If the user downgrades, don't overwrite their config; just keep their stored values.
             }
@@ -304,6 +309,16 @@ public sealed unsafe partial class QuickTransferPlugin : IDalamudPlugin
             return;
         }
 
+        if (InventoryHelpers.ShouldYieldQuickTransferForRetainerMarket(Configuration, mode.Value, inventoryType))
+        {
+            if (Configuration.DebugMode)
+            {
+                Svc.Log.Information("[QuickTransfer] Yielding quick transfer — retainer sell list open.");
+            }
+
+            return;
+        }
+
         var saddlebagOpen = InventoryHelpers.IsSaddlebagOpen();
         var retainerOpen = InventoryHelpers.IsRetainerOpen();
         var companyChestOpen = InventoryHelpers.IsCompanyChestOpen();
@@ -478,6 +493,27 @@ public sealed unsafe partial class QuickTransferPlugin : IDalamudPlugin
         if (mode == null)
         {
             return;
+        }
+
+        try
+        {
+            var agent = (AgentInventoryContext*)args.AgentPtr;
+            if (InventoryHelpers.ShouldYieldQuickTransferForRetainerMarket(
+                    Configuration,
+                    mode.Value,
+                    agent->TargetInventoryId))
+            {
+                if (Configuration.DebugMode)
+                {
+                    Svc.Log.Information("[QuickTransfer] Yielding deferred quick transfer — retainer sell list open.");
+                }
+
+                return;
+            }
+        }
+        catch
+        {
+            // ignore
         }
 
         // IMPORTANT: Do not click inside the open event (re-entrancy risk).
@@ -1008,6 +1044,20 @@ public sealed unsafe partial class QuickTransferPlugin : IDalamudPlugin
         try
         {
             var agent = (AgentInventoryContext*)pending.Value.AgentPtr;
+            if (InventoryHelpers.ShouldYieldQuickTransferForRetainerMarket(
+                    Configuration,
+                    pending.Value.Mode,
+                    agent->TargetInventoryId))
+            {
+                if (Configuration.DebugMode)
+                {
+                    Svc.Log.Information("[QuickTransfer] Skipping deferred quick transfer — retainer sell list open.");
+                }
+
+                ProcessDeferredSortMenuClick(now);
+                return;
+            }
+
             // NOTE:
             // IMenuOpenedArgs.AddonPtr/AddOnName refers to the addon that *opened* the menu (e.g. Inventory/InventoryExpansion),
             // not the context menu addon itself. We must fire callbacks on the actual ContextMenu addon.
