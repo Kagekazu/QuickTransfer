@@ -182,7 +182,7 @@ public class PluginUI : Window
                     config.OnSettingChanged();
                 }
 
-                Hint("When the retainer market sell list is open, quick transfer won't intercept inventory clicks — so plugins like MarketBuddy can use the same modifier. Detected by UI addon, not menu text.");
+                Hint("When the retainer market sell list is open, quick transfer won't intercept inventory or retainer bag clicks. Detected by UI addon, not menu text.");
 
                 ImGui.Spacing();
                 ImGui.Text("Modifier latch");
