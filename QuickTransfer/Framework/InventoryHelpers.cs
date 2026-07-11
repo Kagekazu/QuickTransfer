@@ -131,7 +131,8 @@ internal static unsafe class InventoryHelpers
         => IsPlayerInventoryType(inventoryType) ||
            IsArmouryType(inventoryType) ||
            IsPlayerCrystalsType(inventoryType) ||
-           IsSaddlebagType(inventoryType);
+           IsSaddlebagType(inventoryType) ||
+           IsRetainerType(inventoryType);
 
     public static bool ShouldYieldQuickTransferForRetainerMarket(
         Configuration configuration,
