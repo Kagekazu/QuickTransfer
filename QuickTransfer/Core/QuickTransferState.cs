@@ -53,19 +53,54 @@ internal struct CompanyChestOrganizeState
     public long WaitObservedChangeAtMs;
 }
 
-internal readonly struct ChestSortKey(uint category, uint itemId, bool isHq) : IComparable<ChestSortKey>
+/// <summary>
+///     FC chest organize sort key.
+///     Order: UI category OrderMajor → OrderMinor → materia BaseParam (0 if not materia)
+///     → materia grade → ItemId → HQ.
+///     Materia I–V item IDs are type-major while VI+ are grade-major; using the Materia
+///     sheet keeps all grades sorted by stat then grade like vanilla category sort.
+/// </summary>
+internal readonly struct ChestSortKey(
+    ushort orderMajor,
+    ushort orderMinor,
+    uint materiaBaseParam,
+    byte materiaGrade,
+    uint itemId,
+    bool isHq) : IComparable<ChestSortKey>
 {
-    private readonly uint category = category;
+    private readonly ushort orderMajor = orderMajor;
+    private readonly ushort orderMinor = orderMinor;
+    private readonly uint materiaBaseParam = materiaBaseParam;
+    private readonly byte materiaGrade = materiaGrade;
     private readonly uint itemId = itemId;
     private readonly byte hq = (byte)(isHq ? 1 : 0);
 
     public int CompareTo(ChestSortKey other)
     {
-        var c = category.CompareTo(other.category);
+        var c = orderMajor.CompareTo(other.orderMajor);
         if (c != 0)
         {
             return c;
         }
+
+        c = orderMinor.CompareTo(other.orderMinor);
+        if (c != 0)
+        {
+            return c;
+        }
+
+        c = materiaBaseParam.CompareTo(other.materiaBaseParam);
+        if (c != 0)
+        {
+            return c;
+        }
+
+        c = materiaGrade.CompareTo(other.materiaGrade);
+        if (c != 0)
+        {
+            return c;
+        }
+
         c = itemId.CompareTo(other.itemId);
         return c != 0 ? c : hq.CompareTo(other.hq);
     }
