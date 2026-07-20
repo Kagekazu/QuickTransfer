@@ -15,6 +15,10 @@ internal static class QuickTransferConstants
     public const string ContextMenuAddonName = "ContextMenu";
     public const string SelectYesnoAddonName = "SelectYesno";
 
+    // AetherBags replaces vanilla inventory UIs with custom KamiToolKit addons.
+    public const string AetherBagsRetainerAddonName = "AetherBags_Retainer";
+    public const string AetherBagsSaddleBagAddonName = "AetherBags_SaddleBag";
+
     public static readonly string[] ArmouryAddonNames =
     [
         "ArmouryBoard",

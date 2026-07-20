@@ -1,5 +1,6 @@
 using ECommons;
 using FFXIVClientStructs.FFXIV.Client.Game;
+using FFXIVClientStructs.FFXIV.Client.UI.Agent;
 using FFXIVClientStructs.FFXIV.Component.GUI;
 using Lumina.Excel.Sheets;
 namespace QuickTransfer.Framework;
@@ -117,7 +118,9 @@ internal static unsafe class InventoryHelpers
     }
 
     public static bool IsSaddlebagOpen()
-        => IsAddonVisibleAnyIndex("InventoryBuddy") || IsAddonVisibleAnyIndex("InventoryBuddy2");
+        => IsAddonVisibleAnyIndex("InventoryBuddy") ||
+           IsAddonVisibleAnyIndex("InventoryBuddy2") ||
+           IsAddonVisibleAnyIndex(QuickTransferConstants.AetherBagsSaddleBagAddonName);
 
     public static bool IsRetainerSellListOpen()
         => IsAddonVisibleAnyIndex(QuickTransferConstants.RetainerSellListAddonName);
@@ -125,7 +128,26 @@ internal static unsafe class InventoryHelpers
     public static bool IsRetainerOpen()
         => IsAddonVisibleAnyIndex("RetainerGrid0") ||
            IsRetainerSellListOpen() ||
-           IsAddonVisibleAnyIndex("RetainerGrid");
+           IsAddonVisibleAnyIndex("RetainerGrid") ||
+           IsAddonVisibleAnyIndex(QuickTransferConstants.AetherBagsRetainerAddonName) ||
+           IsRetainerAgentActive();
+
+    /// <summary>
+    ///     True while the retainer agent is active. Covers third-party UIs (e.g. AetherBags)
+    ///     that hide vanilla RetainerGrid* but keep the retainer session open.
+    /// </summary>
+    public static bool IsRetainerAgentActive()
+    {
+        try
+        {
+            var agent = AgentModule.Instance()->GetAgentByInternalId(AgentId.Retainer);
+            return agent != null && agent->IsAgentActive();
+        }
+        catch
+        {
+            return false;
+        }
+    }
 
     public static bool IsRetainerMarketListingSourceType(InventoryType inventoryType)
         => IsPlayerInventoryType(inventoryType) ||
