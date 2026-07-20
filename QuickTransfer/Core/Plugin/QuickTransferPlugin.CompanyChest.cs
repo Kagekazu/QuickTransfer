@@ -1105,7 +1105,7 @@ public sealed unsafe partial class QuickTransferPlugin
             companyChestOrganize.Phase = 2;
         }
 
-        // Phase 2: reorder stacks by (UI category, itemId, HQ), mimicking the feel of Sort/itemsort.
+        // Phase 2: reorder stacks by vanilla-ish keys (UI category order, SubcategorySort, itemId, HQ).
         if (companyChestOrganize.Phase == 2)
         {
             if (TryFindCompanyChestSortMove(pages, out var sSrcType, out var sSrcSlot, out var sDstType, out var sDstSlot))
@@ -1408,8 +1408,7 @@ public sealed unsafe partial class QuickTransferPlugin
 
             var id = it->ItemId;
             var hq = it->Flags.HasFlag(InventoryItem.ItemFlags.HighQuality);
-            var cat = InventoryHelpers.GetItemUiCategory(id);
-            keys[i] = new(cat, id, hq);
+            keys[i] = InventoryHelpers.GetChestSortKey(id, hq);
         }
 
         // Ensure empties are at the end (safety; compaction phase should mostly handle this).

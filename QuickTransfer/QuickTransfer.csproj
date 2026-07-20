@@ -24,7 +24,7 @@
     </PropertyGroup>
 
     <ItemGroup>
-        <PackageReference Include="ECommons" Version="3.2.1.9"/>
+        <PackageReference Include="ECommons" Version="3.2.1.15" />
     </ItemGroup>
 
     <ItemGroup>
