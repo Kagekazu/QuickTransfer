@@ -322,7 +322,9 @@ internal static unsafe class ContextMenuHandler
                 placeIdx >= 0 ? (placeIdx, placeTxt) :
                 (-1, null);
         }
-        else if (retainerOpen)
+        // Retainer branch: addon/agent detection, or Entrust/Retrieve already in the menu
+        // (covers skins that hide RetainerGrid* while still offering native context actions).
+        else if (retainerOpen || entrustIdx >= 0 || retrieveIdx >= 0)
         {
             if (saddlebagOpen)
             {
