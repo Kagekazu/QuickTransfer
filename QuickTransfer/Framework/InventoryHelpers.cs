@@ -5,12 +5,9 @@ using FFXIVClientStructs.FFXIV.Component.GUI;
 using Lumina.Excel.Sheets;
 namespace QuickTransfer.Framework;
 
-/// <summary>
-///     Static helper functions for inventory detection, type checking, and addon visibility.
-/// </summary>
 internal static unsafe class InventoryHelpers
 {
-    private static readonly InventoryType[] PlayerInventoryTypes =
+    public static readonly InventoryType[] PlayerInventoryTypes =
     [
         InventoryType.Inventory1,
         InventoryType.Inventory2,
@@ -18,7 +15,7 @@ internal static unsafe class InventoryHelpers
         InventoryType.Inventory4
     ];
 
-    private static readonly InventoryType[] SaddlebagInventoryTypes =
+    public static readonly InventoryType[] SaddlebagInventoryTypes =
     [
         InventoryType.SaddleBag1,
         InventoryType.SaddleBag2,
@@ -26,7 +23,7 @@ internal static unsafe class InventoryHelpers
         InventoryType.PremiumSaddleBag2
     ];
 
-    private static readonly InventoryType[] RetainerInventoryTypes =
+    public static readonly InventoryType[] RetainerInventoryTypes =
     [
         InventoryType.RetainerPage1,
         InventoryType.RetainerPage2,
@@ -38,7 +35,6 @@ internal static unsafe class InventoryHelpers
     ];
 
     private static readonly Dictionary<uint, uint> StackSizeCache = [];
-    private static readonly Dictionary<uint, uint> ItemUiCategoryCache = [];
     private static readonly Dictionary<uint, ChestSortParts> ItemSortPartsCache = [];
     private static Dictionary<uint, (uint BaseParam, byte Grade)>? MateriaSortLookup;
     private static readonly object MateriaLookupGate = new();
@@ -55,14 +51,11 @@ internal static unsafe class InventoryHelpers
     public static bool IsPlayerCrystalsType(InventoryType inventoryType)
         => inventoryType == InventoryType.Crystals;
 
-    public static bool IsCompanyChestCrystalsType(InventoryType inventoryType)
-        => inventoryType == InventoryType.FreeCompanyCrystals;
-
     public static bool IsCompanyChestDepositSourceType(InventoryType inventoryType)
         => IsPlayerInventoryType(inventoryType) || IsArmouryType(inventoryType) || IsPlayerCrystalsType(inventoryType);
 
     public static bool IsCompanyChestDestinationType(InventoryType inventoryType)
-        => IsCompanyChestType(inventoryType) || IsCompanyChestCrystalsType(inventoryType);
+        => IsCompanyChestType(inventoryType) || inventoryType == InventoryType.FreeCompanyCrystals;
 
     public static bool IsArmouryType(InventoryType inventoryType)
         => inventoryType is
@@ -103,17 +96,94 @@ internal static unsafe class InventoryHelpers
         return !string.IsNullOrEmpty(name) && name.StartsWith("FreeCompanyPage", StringComparison.OrdinalIgnoreCase);
     }
 
-    public static bool IsAddonVisible(string addonName, int index = 1)
+    private static AtkUnitManager* UnitManager
     {
-        var addon = AddonHelpers.GetAddonByName(addonName, index);
-        return addon != null && addon->IsVisible;
+        get
+        {
+            try
+            {
+                var stage = AtkStage.Instance();
+                return stage == null ? null : &stage->RaptureAtkUnitManager->AtkUnitManager;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+    }
+
+    public static AtkUnitBase* GetAddonById(uint id)
+    {
+        try
+        {
+            if (id is 0 or > ushort.MaxValue)
+            {
+                return null;
+            }
+
+            var mgr = UnitManager;
+            if (mgr == null)
+            {
+                return null;
+            }
+
+            var addon = mgr->GetAddonById((ushort)id);
+            return addon != null && addon->Id == id ? addon : null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    public static AtkUnitBase* GetAddonByName(string addonName, int index = 1)
+    {
+        try
+        {
+            if (string.IsNullOrEmpty(addonName) || index < 1)
+            {
+                return null;
+            }
+
+            var mgr = UnitManager;
+            return mgr == null ? null : mgr->GetAddonByName(addonName, index);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    public static bool TryGetVisibleAddon(string addonName, out AtkUnitBase* addon, int maxIndex = 6)
+    {
+        addon = null;
+        if (string.IsNullOrEmpty(addonName))
+        {
+            return false;
+        }
+
+        var limit = Math.Max(1, maxIndex);
+        for (var i = 1; i <= limit; i++)
+        {
+            var candidate = GetAddonByName(addonName, i);
+            if (candidate == null || !candidate->IsVisible)
+            {
+                continue;
+            }
+
+            addon = candidate;
+            return true;
+        }
+
+        return false;
     }
 
     public static bool IsAddonVisibleAnyIndex(string addonName, int maxIndex = 6)
     {
         for (var i = 1; i <= maxIndex; i++)
         {
-            if (IsAddonVisible(addonName, i))
+            var addon = GetAddonByName(addonName, i);
+            if (addon != null && addon->IsVisible)
             {
                 return true;
             }
@@ -137,10 +207,6 @@ internal static unsafe class InventoryHelpers
            IsAddonVisibleAnyIndex(QuickTransferConstants.AetherBagsRetainerAddonName) ||
            IsRetainerAgentActive();
 
-    /// <summary>
-    ///     True while the retainer agent is active. Covers third-party UIs (e.g. AetherBags)
-    ///     that hide vanilla RetainerGrid* but keep the retainer session open.
-    /// </summary>
     public static bool IsRetainerAgentActive()
     {
         try
@@ -185,9 +251,6 @@ internal static unsafe class InventoryHelpers
 
     public static bool IsVendorOpen()
         => IsAddonVisibleAnyIndex("Shop");
-
-    public static bool TryGetVisibleAddon(string addonName, out AtkUnitBase* addon, int maxIndex = 6)
-        => AddonHelpers.TryGetVisibleAddon(addonName, out addon, maxIndex);
 
     public static bool TryGetItemInfo(
         InventoryType type,
@@ -235,10 +298,6 @@ internal static unsafe class InventoryHelpers
         }
     }
 
-    public static InventoryType[] GetPlayerInventoryTypes() => PlayerInventoryTypes;
-    public static InventoryType[] GetSaddlebagInventoryTypes() => SaddlebagInventoryTypes;
-    public static InventoryType[] GetRetainerInventoryTypes() => RetainerInventoryTypes;
-
     public static uint GetItemStackSize(uint itemId)
     {
         try
@@ -275,54 +334,6 @@ internal static unsafe class InventoryHelpers
         }
     }
 
-    public static uint GetItemUiCategory(uint itemId)
-    {
-        try
-        {
-            if (itemId == 0)
-            {
-                return 0;
-            }
-
-            lock (ItemUiCategoryCache)
-            {
-                if (ItemUiCategoryCache.TryGetValue(itemId, out var cached))
-                {
-                    return cached;
-                }
-            }
-
-            if (!GenericHelpers.TryGetRow(itemId, out Item row) || row.RowId == 0)
-            {
-                return 0;
-            }
-
-            uint result;
-            try
-            {
-                result = row.ItemUICategory.RowId;
-            }
-            catch
-            {
-                result = 0;
-            }
-
-            lock (ItemUiCategoryCache)
-            {
-                ItemUiCategoryCache[itemId] = result;
-            }
-            return result;
-        }
-        catch
-        {
-            return 0;
-        }
-    }
-
-    /// <summary>
-    ///     Vanilla-ish sort key for FC chest organize.
-    ///     Materia uses Materia sheet (BaseParam → grade) so all tiers group by stat.
-    /// </summary>
     public static ChestSortKey GetChestSortKey(uint itemId, bool isHq)
     {
         var parts = GetItemSortParts(itemId);
@@ -375,7 +386,6 @@ internal static unsafe class InventoryHelpers
                     // ignore
                 }
 
-                // FilterGroup 13 = Materia (see EXDSchema Item.FilterGroup).
                 try
                 {
                     if (row.FilterGroup == 13 &&

@@ -36,11 +36,9 @@ public sealed unsafe partial class QuickTransferPlugin
             // ignored
         }
     }
-    private InventoryType[] GetCompanyChestInventoryTypes()
+    private InventoryType[] GetCompanyChestInventoryTypes(int? maxCompartments = null)
     {
-        // Don't hardcode enum names; discover them by name at runtime so we don't break across patches/structs.
-        // Limit to the configured number of item compartments (default 3; can be upgraded to 5).
-        var max = Math.Clamp(Configuration.CompanyChestCompartments, 3, 5);
+        var max = Math.Clamp(maxCompartments ?? Configuration.CompanyChestCompartments, 3, 5);
         return
         [
             .. Enum.GetValues<InventoryType>()
@@ -49,15 +47,6 @@ public sealed unsafe partial class QuickTransferPlugin
                 .Take(max)
         ];
     }
-
-    private static InventoryType[] GetAllCompanyChestItemPages()
-        =>
-        [
-            .. Enum.GetValues<InventoryType>()
-                .Where(InventoryHelpers.IsCompanyChestType)
-                .OrderBy(v => (int)v)
-                .Take(5)
-        ];
 
     private bool TryResolveCompanyChestPageFromAddon(AtkUnitBase* addon, out InventoryType page)
     {
@@ -412,13 +401,7 @@ public sealed unsafe partial class QuickTransferPlugin
 
                 // Deposit is interactive; stop it outright on busy.
                 companyChestDeposit.Active = false;
-                pendingCompanyChestNumericConfirmUntilMs = 0;
-                pendingCompanyChestNumericArmed = false;
-                pendingNumericKind = PendingNumericKind.None;
-                pendingCompanyChestNumericDesired = 0;
-                pendingCompanyChestNumericHalf = false;
-                pendingCompanyChestNumericValueSet = false;
-                pendingCompanyChestNumericValueSetAtMs = 0;
+                ClearPendingNumeric();
 
                 if (Configuration.DebugMode)
                 {
@@ -607,14 +590,7 @@ public sealed unsafe partial class QuickTransferPlugin
 
         if (Configuration.AutoConfirmCompanyChestQuantity && needsQuantityConfirm)
         {
-            pendingCompanyChestNumericConfirmUntilMs = now + 1500;
-            pendingCompanyChestNumericConfirmAttempts = 0;
-            pendingCompanyChestNumericArmed = true;
-            pendingNumericKind = PendingNumericKind.Store;
-            pendingCompanyChestNumericValueSet = false;
-            pendingCompanyChestNumericValueSetAtMs = 0;
-            pendingCompanyChestNumericDesired = 0;
-            pendingCompanyChestNumericHalf = false;
+            ArmPendingNumeric(now, PendingNumericKind.Store, 1500);
         }
 
         if (Configuration.DebugMode)
@@ -770,7 +746,6 @@ public sealed unsafe partial class QuickTransferPlugin
                 return;
             }
 
-            // Rate-limit skip logs; only log when the reason changes or every 2s.
             if (!string.Equals(lastCompanyChestOrganizeSkipReason, reason, StringComparison.Ordinal) ||
                 now - lastCompanyChestOrganizeSkipLogMs >= 2000)
             {
@@ -977,12 +952,10 @@ public sealed unsafe partial class QuickTransferPlugin
             return;
         }
 
-        // Phase 0: merge stacks where possible. (Disabled for FC chest by starting at Phase=1.)
         if (companyChestOrganize.Phase == 0)
         {
             if (TryFindCompanyChestMergeMove(pages, out var srcType, out var srcSlot, out var dstType, out var dstSlot, out var needsNumeric))
             {
-                // Snapshot BEFORE issuing the move (so we can detect when it applies).
                 var preSrcId = 0u;
                 var preDstId = 0u;
                 var preSrcQty = 0;
@@ -1026,15 +999,7 @@ public sealed unsafe partial class QuickTransferPlugin
 
                 if (Configuration.AutoConfirmCompanyChestQuantity && needsNumeric)
                 {
-                    pendingCompanyChestNumericConfirmUntilMs = now + 1500;
-                    pendingCompanyChestNumericConfirmAttempts = 0;
-                    pendingCompanyChestNumericArmed = true;
-                    pendingNumericKind = PendingNumericKind.Move;
-                    pendingCompanyChestNumericValueSet = false;
-                    pendingCompanyChestNumericValueSetAtMs = 0;
-                    pendingCompanyChestNumericDesired = 0;
-                    pendingCompanyChestNumericHalf = false;
-                    ArmSuppressInputNumeric(now);
+                    ArmPendingNumeric(now, PendingNumericKind.Move, 1500, suppressMs: 1500);
                 }
 
                 if (Configuration.DebugMode)
@@ -1051,7 +1016,6 @@ public sealed unsafe partial class QuickTransferPlugin
         // Phase 1: compact items to fill empty slots from the start.
         if (TryFindCompanyChestCompactionMove(pages, out var cSrcType, out var cSrcSlot, out var cDstType, out var cDstSlot))
         {
-            // Snapshot BEFORE issuing the move (so we can detect when it applies).
             var preSrcId = 0u;
             var preDstId = 0u;
             var preSrcQty = 0;
@@ -1110,7 +1074,6 @@ public sealed unsafe partial class QuickTransferPlugin
         {
             if (TryFindCompanyChestSortMove(pages, out var sSrcType, out var sSrcSlot, out var sDstType, out var sDstSlot))
             {
-                // Snapshot BEFORE issuing the move (so we can detect when it applies).
                 var preSrcId = 0u;
                 var preDstId = 0u;
                 var preSrcQty = 0;
@@ -1480,9 +1443,6 @@ public sealed unsafe partial class QuickTransferPlugin
             return false;
         }
 
-        // IMPORTANT:
-        // HandleItemMove expects InventoryType values (e.g. Inventory1=0, FreeCompanyPage1=20000),
-        // not "container ids" like 48/57.
         var srcInvType = (uint)sourceType;
         var dstInvType = (uint)destType;
 
@@ -1494,7 +1454,6 @@ public sealed unsafe partial class QuickTransferPlugin
             AtkValue* ret;
             if (keepAliveForInputNumeric)
             {
-                // Keep alive across the InputNumeric dialog.
                 if (pendingMoveOutValuePtr != 0)
                 {
                     try { Marshal.FreeHGlobal(pendingMoveOutValuePtr); }
@@ -1773,7 +1732,7 @@ public sealed unsafe partial class QuickTransferPlugin
     {
         try
         {
-            var ctxMenu = (AddonContextMenu*)AddonHelpers.GetAddonByName("ContextMenu");
+            var ctxMenu = (AddonContextMenu*)InventoryHelpers.GetAddonByName(QuickTransferConstants.ContextMenuAddonName);
             if (ctxMenu == null)
             {
                 return false;
@@ -1833,8 +1792,7 @@ public sealed unsafe partial class QuickTransferPlugin
                 }
             }
 
-            // Fallback: keep old string-scan (helpful for debugging), but don't attempt a blind click.
-            return ContextMenuHandler.ContainsString((AtkUnitBase*)ctxMenu, "Remove", Configuration.DebugMode);
+            return false;
         }
         catch (Exception ex)
         {
@@ -1847,21 +1805,12 @@ public sealed unsafe partial class QuickTransferPlugin
         page = default;
         try
         {
-            // IMPORTANT: this mapping is about tab clicks, not how many compartments we *want* to operate on.
-            // So we always consider all possible item pages (up to 5), even if the user configured fewer.
-            var pages = GetAllCompanyChestItemPages();
+            var pages = GetCompanyChestInventoryTypes(5);
             if (pages.Length == 0)
             {
                 return false;
             }
 
-            // Free Company Chest (your UI):
-            // param=1 -> Items tab 1 (FreeCompanyPage1)
-            // param=2 -> Items tab 2 (FreeCompanyPage2)
-            // param=3 -> Items tab 3 (FreeCompanyPage3)
-            // param=4 -> Items tab 4 (FreeCompanyPage4) [FC rank unlock]
-            // param=5 -> Items tab 5 (FreeCompanyPage5) [FC rank unlock]
-            // param=6 -> Crystals tab
             if (eventParam == 6)
             {
                 page = InventoryType.FreeCompanyCrystals;

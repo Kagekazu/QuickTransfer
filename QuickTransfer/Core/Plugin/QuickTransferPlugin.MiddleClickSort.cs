@@ -21,11 +21,6 @@ public sealed unsafe partial class QuickTransferPlugin
                 return false;
             }
 
-            // We can't reliably compare addon pointers here:
-            // - The collision manager can report child addons/overlays
-            // - Some users have addon indices > 6
-            //
-            // Instead, map via Id/HostId/ParentId to a known *owner* addon window.
             bool TryGetVisibleAddonId(string name, out uint id)
             {
                 id = 0;
@@ -190,7 +185,7 @@ public sealed unsafe partial class QuickTransferPlugin
                 return true;
             }
 
-            if (!CursorHoverHelpers.TryGetClientCursorPos(out var x, out var y))
+            if (!ModifierBindings.TryGetClientCursorPos(out var x, out var y))
             {
                 return false;
             }
@@ -302,8 +297,6 @@ public sealed unsafe partial class QuickTransferPlugin
     {
         try
         {
-            // If multiple inventory windows are open, we can't know which one the cursor is over without a hover DDI.
-            // In that case, refuse and require hover capture.
             var visibleCount = 0;
 
             InventoryType chosenType = default;
@@ -325,7 +318,7 @@ public sealed unsafe partial class QuickTransferPlugin
             // Saddlebags
             if (InventoryHelpers.TryGetVisibleAddon("InventoryBuddy", out var sb, QuickTransferConstants.WideAddonSearchMaxIndex) && sb != null)
             {
-                if (DragDropHelpers.TryResolveTargetFromWeirdPayload(QuickTransferConstants.SaddlebagInventoryTypes, -1, -1, -1, out var t, out var s))
+                if (DragDropHelpers.TryResolveTargetFromWeirdPayload(InventoryHelpers.SaddlebagInventoryTypes, -1, -1, -1, out var t, out var s))
                 {
                     visibleCount++;
                     chosenType = t;
@@ -335,7 +328,7 @@ public sealed unsafe partial class QuickTransferPlugin
             }
             else if (InventoryHelpers.TryGetVisibleAddon("InventoryBuddy2", out var sb2, QuickTransferConstants.WideAddonSearchMaxIndex) && sb2 != null)
             {
-                if (DragDropHelpers.TryResolveTargetFromWeirdPayload(QuickTransferConstants.SaddlebagInventoryTypes, -1, -1, -1, out var t, out var s))
+                if (DragDropHelpers.TryResolveTargetFromWeirdPayload(InventoryHelpers.SaddlebagInventoryTypes, -1, -1, -1, out var t, out var s))
                 {
                     visibleCount++;
                     chosenType = t;
@@ -347,7 +340,7 @@ public sealed unsafe partial class QuickTransferPlugin
             // Player inventory
             if (InventoryHelpers.TryGetVisibleAddon("Inventory", out var inv, QuickTransferConstants.WideAddonSearchMaxIndex) && inv != null)
             {
-                if (DragDropHelpers.TryResolveTargetFromWeirdPayload(QuickTransferConstants.PlayerInventoryTypes, -1, -1, -1, out var t, out var s))
+                if (DragDropHelpers.TryResolveTargetFromWeirdPayload(InventoryHelpers.PlayerInventoryTypes, -1, -1, -1, out var t, out var s))
                 {
                     visibleCount++;
                     chosenType = t;
@@ -359,7 +352,7 @@ public sealed unsafe partial class QuickTransferPlugin
             // Retainer inventory
             if (InventoryHelpers.TryGetVisibleAddon("RetainerGrid0", out var rg0, QuickTransferConstants.WideAddonSearchMaxIndex) && rg0 != null)
             {
-                if (DragDropHelpers.TryResolveTargetFromWeirdPayload(QuickTransferConstants.RetainerInventoryTypes, -1, -1, -1, out var t, out var s))
+                if (DragDropHelpers.TryResolveTargetFromWeirdPayload(InventoryHelpers.RetainerInventoryTypes, -1, -1, -1, out var t, out var s))
                 {
                     visibleCount++;
                     chosenType = t;
@@ -369,7 +362,7 @@ public sealed unsafe partial class QuickTransferPlugin
             }
             else if (InventoryHelpers.TryGetVisibleAddon("RetainerGrid", out var rg, QuickTransferConstants.WideAddonSearchMaxIndex) && rg != null)
             {
-                if (DragDropHelpers.TryResolveTargetFromWeirdPayload(QuickTransferConstants.RetainerInventoryTypes, -1, -1, -1, out var t, out var s))
+                if (DragDropHelpers.TryResolveTargetFromWeirdPayload(InventoryHelpers.RetainerInventoryTypes, -1, -1, -1, out var t, out var s))
                 {
                     visibleCount++;
                     chosenType = t;
@@ -379,7 +372,7 @@ public sealed unsafe partial class QuickTransferPlugin
             }
             else if (InventoryHelpers.TryGetVisibleAddon("RetainerSellList", out var rsl, QuickTransferConstants.WideAddonSearchMaxIndex) && rsl != null)
             {
-                if (DragDropHelpers.TryResolveTargetFromWeirdPayload(QuickTransferConstants.RetainerInventoryTypes, -1, -1, -1, out var t, out var s))
+                if (DragDropHelpers.TryResolveTargetFromWeirdPayload(InventoryHelpers.RetainerInventoryTypes, -1, -1, -1, out var t, out var s))
                 {
                     visibleCount++;
                     chosenType = t;
@@ -462,17 +455,17 @@ public sealed unsafe partial class QuickTransferPlugin
             ReadOnlySpan<InventoryType> containers = default;
             if (addonName.Equals("Inventory", StringComparison.OrdinalIgnoreCase))
             {
-                containers = QuickTransferConstants.PlayerInventoryTypes;
+                containers = InventoryHelpers.PlayerInventoryTypes;
             }
             else if (addonName.Equals("InventoryBuddy", StringComparison.OrdinalIgnoreCase) || addonName.Equals("InventoryBuddy2", StringComparison.OrdinalIgnoreCase))
             {
-                containers = QuickTransferConstants.SaddlebagInventoryTypes;
+                containers = InventoryHelpers.SaddlebagInventoryTypes;
             }
             else if (addonName.Equals("RetainerGrid0", StringComparison.OrdinalIgnoreCase) ||
                      addonName.Equals("RetainerGrid", StringComparison.OrdinalIgnoreCase) ||
                      addonName.Equals("RetainerSellList", StringComparison.OrdinalIgnoreCase))
             {
-                containers = QuickTransferConstants.RetainerInventoryTypes;
+                containers = InventoryHelpers.RetainerInventoryTypes;
             }
             else if (addonName.Equals(QuickTransferConstants.FreeCompanyChestAddonName, StringComparison.OrdinalIgnoreCase))
             {
@@ -609,11 +602,8 @@ public sealed unsafe partial class QuickTransferPlugin
         }
 
         var hDdi = lastHoverDdi;
-        // Rollover events only fire when moving the cursor; keep a generous window so MMB works while stationary.
         if (hDdi == null || now - hDdi.Value.SeenAtMs > 20000)
         {
-            // Inventory sometimes does not emit hover events; fall back to a window hit-test at the cursor.
-            // This also lets us disambiguate which window is being targeted when multiple are open.
             if (TryUpdateLastHoverAddonFromCursorHitTest(now) && TryQueueMiddleClickSortFromLastHoverAddon(now))
             {
                 return;
@@ -638,13 +628,6 @@ public sealed unsafe partial class QuickTransferPlugin
         {
             var ddiAddonId = hDdi.Value.AddonId;
 
-            // Key rule for stability across windows:
-            // - A stored hover DDI can be stale if the UI doesn't emit MouseOut/RollOut events (common for Inventory/Saddlebags).
-            // - Therefore, if the DDI wasn't updated very recently, prefer a live hit-test (collision manager) to determine
-            //   which window is actually under the cursor right now.
-            //
-            // Armoury remains stable because the collision manager typically also reports it correctly, and we no longer
-            // let stale "lastHoverAddon" from other windows override a fresh cursor hit-test.
             var ddiFresh = now - hDdi.Value.SeenAtMs <= 250;
             if (!ddiFresh)
             {
@@ -654,7 +637,6 @@ public sealed unsafe partial class QuickTransferPlugin
                 }
             }
 
-            // Otherwise, use the DDI's addon id and cached addon name as the target.
             if (!string.IsNullOrWhiteSpace(lastHoverAddonName))
             {
                 lastHoverAddon = (lastHoverAddonName, ddiAddonId, now);
@@ -664,7 +646,6 @@ public sealed unsafe partial class QuickTransferPlugin
                 }
             }
 
-            // As a fallback, still allow using the last-good target for this addon id.
             if (lastGoodContextTargetByAddonId.TryGetValue(ddiAddonId, out var good2))
             {
                 var openSlot = DragDropHelpers.PickContextMenuSlot(good2.Type, good2.Slot);
@@ -678,16 +659,15 @@ public sealed unsafe partial class QuickTransferPlugin
                 return;
             }
 
-            // If we can't decide safely, do nothing.
             pendingMiddleClickSortUntilMs = now + 1500;
             lastMiddleClickSortMs = now;
         }
         catch (Exception ex)
         {
-            // Best-effort only; avoid crashing the client if the hovered pointer becomes invalid.
             Svc.Log.Warning(ex, "[QuickTransfer] (MMB) Failed to queue sort from hover dragdrop.");
         }
     }
+
     private void ProcessDeferredSortMenuClick(long now)
     {
         var pendingSort = pendingDeferredSortMenuClick;
@@ -696,7 +676,6 @@ public sealed unsafe partial class QuickTransferPlugin
             return;
         }
 
-        // Give the context menu a moment to populate after OpenForItemSlot.
         if (now - pendingSort.Value.EnqueuedAtMs < 50)
         {
             return;
@@ -732,7 +711,7 @@ public sealed unsafe partial class QuickTransferPlugin
             {
                 try
                 {
-                    var cm = AddonHelpers.GetAddonByName("ContextMenu");
+                    var cm = InventoryHelpers.GetAddonByName(QuickTransferConstants.ContextMenuAddonName);
                     if (cm != null)
                     {
                         addon = cm;

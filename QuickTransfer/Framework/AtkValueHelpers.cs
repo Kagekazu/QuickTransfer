@@ -6,9 +6,6 @@ using AtkValueType = FFXIVClientStructs.FFXIV.Component.GUI.AtkValueType;
 
 namespace QuickTransfer.Framework;
 
-/// <summary>
-///     Utility functions for working with AtkValue structures.
-/// </summary>
 internal static unsafe class AtkValueHelpers
 {
     public static string ReadAtkValueString(AtkValue v)
@@ -28,7 +25,7 @@ internal static unsafe class AtkValueHelpers
         }
     }
 
-    public static string ReadUtf8(byte* ptr)
+    private static string ReadUtf8(byte* ptr)
     {
         if (ptr == null)
         {
@@ -72,7 +69,7 @@ internal static unsafe class AtkValueHelpers
         s->BufUsed = value.Length + 1;
     }
 
-    public static AtkValue* CreateAtkValueArray(params object[] values)
+    private static AtkValue* CreateAtkValueArray(params object[] values)
     {
         var atkValues = (AtkValue*)Marshal.AllocHGlobal(values.Length * sizeof(AtkValue));
         if (atkValues == null)

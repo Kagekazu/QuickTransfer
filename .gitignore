@@ -4,6 +4,9 @@
 *.userosscache
 *.sln.docstates
 
+# Cursor local agent context
+.cursor/
+
 # Build results
 [Dd]ebug/
 [Rr]elease/

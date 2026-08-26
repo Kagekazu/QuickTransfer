@@ -4,9 +4,6 @@ using AtkValueType = FFXIVClientStructs.FFXIV.Component.GUI.AtkValueType;
 
 namespace QuickTransfer.Framework;
 
-/// <summary>
-///     Handles context menu selection and matching logic.
-/// </summary>
 internal static unsafe class ContextMenuHandler
 {
     public enum AutoContextAction
@@ -109,7 +106,7 @@ internal static unsafe class ContextMenuHandler
             var agentAddonId = agent->AgentInterface.GetAddonId();
             if (agentAddonId != 0)
             {
-                addon = AddonHelpers.GetAddonById(agentAddonId);
+                addon = InventoryHelpers.GetAddonById(agentAddonId);
             }
         }
         catch
@@ -119,7 +116,7 @@ internal static unsafe class ContextMenuHandler
 
         if (addon is null)
         {
-            addon = AddonHelpers.GetAddonByName(QuickTransferConstants.ContextMenuAddonName);
+            addon = InventoryHelpers.GetAddonByName(QuickTransferConstants.ContextMenuAddonName);
         }
 
         return addon is not null && TryAutoSelectAndClose(
@@ -139,7 +136,7 @@ internal static unsafe class ContextMenuHandler
             var agentAddonId = agent->AgentInterface.GetAddonId();
             if (agentAddonId != 0)
             {
-                var addon = AddonHelpers.GetAddonById(agentAddonId);
+                var addon = InventoryHelpers.GetAddonById(agentAddonId);
                 if (addon is not null)
                 {
                     CloseContextMenuAddon(agent, addon);
@@ -154,7 +151,7 @@ internal static unsafe class ContextMenuHandler
 
         try
         {
-            var cm = AddonHelpers.GetAddonByName(QuickTransferConstants.ContextMenuAddonName);
+            var cm = InventoryHelpers.GetAddonByName(QuickTransferConstants.ContextMenuAddonName);
             if (cm is not null)
             {
                 CloseContextMenuAddon(agent, cm);
@@ -192,7 +189,6 @@ internal static unsafe class ContextMenuHandler
         chosenText = string.Empty;
         chosenIndex = -1;
 
-        // Single-pass: decode each label once, record first match per action.
         var foundAny = false;
 
         int removeIdx = -1, addIdx = -1, placeIdx = -1, returnIdx = -1, entrustIdx = -1, retrieveIdx = -1, companyRemoveIdx = -1, splitIdx = -1, tradeIdx = -1, sellIdx = -1;
@@ -215,7 +211,6 @@ internal static unsafe class ContextMenuHandler
 
             foundAny = true;
 
-            // Priority matters: we want the first matching index for each action.
             if (removeIdx < 0 && ContextLabelMatches(AutoContextAction.RemoveAllFromSaddlebag, text))
             {
                 removeIdx = i;
@@ -296,7 +291,6 @@ internal static unsafe class ContextMenuHandler
         var tradeOpen = InventoryHelpers.IsTradeOpen();
         var vendorOpen = InventoryHelpers.IsVendorOpen();
 
-        // Choose the best action that exists in the menu.
         (int idx, string? txt) chosen;
         if (mode == ModifierMode.Alt)
         {
@@ -304,12 +298,10 @@ internal static unsafe class ContextMenuHandler
         }
         else if (mode == ModifierMode.Shift && vendorOpen && configuration.EnableVendorQuickSell)
         {
-            // Vendor shop: prioritize Sell action when vendor is open
             chosen = sellIdx >= 0 ? (sellIdx, sellTxt) : (-1, null);
         }
         else if (mode == ModifierMode.Shift && tradeOpen)
         {
-            // Trade window: prioritize Trade action when Trade window is open
             chosen = tradeIdx >= 0 ? (tradeIdx, tradeTxt) : (-1, null);
         }
         else if (mode == ModifierMode.Shift && companyChestOpen && configuration.EnableCompanyChest)
@@ -322,26 +314,17 @@ internal static unsafe class ContextMenuHandler
                 placeIdx >= 0 ? (placeIdx, placeTxt) :
                 (-1, null);
         }
-        // Retainer branch: addon/agent detection, or Entrust/Retrieve already in the menu
-        // (covers skins that hide RetainerGrid* while still offering native context actions).
         else if (retainerOpen || entrustIdx >= 0 || retrieveIdx >= 0)
         {
             if (saddlebagOpen)
             {
-                // Retainer <-> Saddlebag:
-                // - Retainer item: Add All to Saddlebag
-                // - Saddlebag item: Entrust to Retainer
                 chosen = addIdx >= 0 ? (addIdx, addTxt) :
                     entrustIdx >= 0 ? (entrustIdx, entrustTxt) :
-                    // last-resort fallback
                     removeIdx >= 0 ? (removeIdx, removeTxt) :
                     (-1, null);
             }
             else
             {
-                // Retainer <-> Player (Inventory/Armoury):
-                // - Retainer item: Retrieve from Retainer
-                // - Player item: Entrust to Retainer
                 chosen = retrieveIdx >= 0 ? (retrieveIdx, retrieveTxt) :
                     entrustIdx >= 0 ? (entrustIdx, entrustTxt) :
                     (-1, null);
@@ -367,12 +350,8 @@ internal static unsafe class ContextMenuHandler
 
         AtkValueHelpers.GenerateCallback(contextMenuAddon, 0, chosen.idx, 0U, 0, 0);
 
-        // Some actions (notably Split and Trade) can be cancelled if we close the menu immediately.
-        // Delay the close slightly to allow the follow-up UI (InputNumeric) to spawn.
         if (chosen.txt != null && (ContextLabelMatches(AutoContextAction.Split, chosen.txt) || ContextLabelMatches(AutoContextAction.Trade, chosen.txt)))
         {
-            // Don't close immediately: on some setups this cancels the action before InputNumeric opens.
-            // We'll keep the menu invisible (via suppression) and close it later as a cleanup.
             pendingCloseContextMenuAtMs = Environment.TickCount64 + 3000;
         }
         else
@@ -407,8 +386,6 @@ internal static unsafe class ContextMenuHandler
                 continue;
             }
 
-            // If Sort isn't present (because the container is already sorted), the menu often contains "Undo Sort" instead.
-            // We treat that as "already sorted" and do nothing (closing the menu).
             if (undoSortIdx < 0 && text.Trim().Equals("Undo Sort", StringComparison.OrdinalIgnoreCase))
             {
                 undoSortIdx = i;
@@ -426,7 +403,6 @@ internal static unsafe class ContextMenuHandler
             return true;
         }
 
-        // No "Sort" entry. If "Undo Sort" exists, we're already sorted; close the menu without changing state.
         if (undoSortIdx >= 0)
         {
             try { CloseContextMenuAddon(agent, contextMenuAddon); }
@@ -437,57 +413,6 @@ internal static unsafe class ContextMenuHandler
             chosenText = "Already sorted";
             chosenIndex = -1;
             return true;
-        }
-
-        return false;
-    }
-
-    public static bool ContainsString(AtkUnitBase* ctxAddon, string needle, bool debugMode)
-    {
-        try
-        {
-            if (ctxAddon == null || ctxAddon->AtkValues == null || ctxAddon->AtkValuesCount <= 0)
-            {
-                return false;
-            }
-
-            var count = Math.Min((int)ctxAddon->AtkValuesCount, 128);
-            if (debugMode)
-            {
-                Svc.Log.Information($"[QuickTransfer] ContextMenu AtkValuesCount={ctxAddon->AtkValuesCount} (scanning {count}).");
-            }
-            for (var i = 0; i < count; i++)
-            {
-                var v = ctxAddon->AtkValues[i];
-                if (v.Type is not (AtkValueType.String or AtkValueType.ManagedString or AtkValueType.ConstString))
-                {
-                    continue;
-                }
-
-                var s = AtkValueHelpers.ReadAtkValueString(v);
-                if (string.IsNullOrWhiteSpace(s))
-                {
-                    continue;
-                }
-
-                if (debugMode)
-                {
-                    Svc.Log.Information($"[QuickTransfer] ContextMenu AtkValue[{i}] = '{s}'");
-                }
-
-                if (s.Contains(needle, StringComparison.OrdinalIgnoreCase))
-                {
-                    if (debugMode)
-                    {
-                        Svc.Log.Information($"[QuickTransfer] ContextMenu contains '{needle}' (found '{s}' at AtkValue[{i}]).");
-                    }
-                    return true;
-                }
-            }
-        }
-        catch
-        {
-            // ignore
         }
 
         return false;
