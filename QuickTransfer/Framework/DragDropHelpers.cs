@@ -3,14 +3,8 @@ using FFXIVClientStructs.FFXIV.Client.Game;
 using FFXIVClientStructs.FFXIV.Component.GUI;
 namespace QuickTransfer.Framework;
 
-/// <summary>
-///     Helper functions for parsing drag-drop interfaces from UI events.
-/// </summary>
 internal static unsafe class DragDropHelpers
 {
-    // ArmouryBoard drag-drop payloads are not always (InventoryType, Slot).
-    // On some builds the payload's Int1 is a category index, and Int2 is the slot within that category.
-    // This mapping is best-effort and is only applied when we're sure the hover comes from the ArmouryBoard addon.
     internal static readonly InventoryType[] ArmouryBoardIndexToType =
     [
         InventoryType.ArmoryMainHand,
@@ -56,7 +50,6 @@ internal static unsafe class DragDropHelpers
                 var r = eventData->ListItemData.ListItemRenderer;
                 if (r != null)
                 {
-                    // Prefer the embedded DragDrop component if present.
                     if (r->DragDropComponent != null)
                     {
                         ddi = &r->DragDropComponent->AtkDragDropInterface;
@@ -82,67 +75,35 @@ internal static unsafe class DragDropHelpers
             return true;
         }
 
-        static AtkDragDropInterface* TryGetDdiFromList(AtkComponentList* list)
+        static AtkDragDropInterface* TryGetHoveredListDdi(AtkComponentList* list)
         {
             if (list == null)
             {
                 return null;
             }
 
-            // The list tracks a hovered item index itself, which is much safer than trying to interpret eventParam.
-            // Prefer HoveredItemIndex, then fall back to other hover slots.
-            static AtkDragDropInterface* FromIndex(AtkComponentList* l, int idx)
+            var hovered = TryGetDdiFromListIndex(list, list->HoveredItemIndex);
+            if (hovered != null)
             {
-                if (idx is < 0 or > 512)
-                {
-                    return null;
-                }
-                try
-                {
-                    var r = l->GetItemRenderer(idx);
-                    return r != null ? &r->AtkDragDropInterface : null;
-                }
-                catch
-                {
-                    return null;
-                }
+                return hovered;
             }
 
-            var ddi0 = FromIndex(list, list->HoveredItemIndex);
-            if (ddi0 != null)
-            {
-                return ddi0;
-            }
-
-            var ddi1 = FromIndex(list, list->HoveredItemIndex2);
-            if (ddi1 != null)
-            {
-                return ddi1;
-            }
-
-            var ddi2 = FromIndex(list, list->HoveredItemIndex3);
-            return ddi2 != null ? ddi2 : null;
+            hovered = TryGetDdiFromListIndex(list, list->HoveredItemIndex2);
+            return hovered != null ? hovered : TryGetDdiFromListIndex(list, list->HoveredItemIndex3);
         }
 
-        static AtkDragDropInterface* TryGetDdiFromComponent(AtkComponentBase* component)
+        static AtkDragDropInterface* TryGetDdiFromComponentOrHoveredList(AtkComponentBase* component)
         {
             if (component == null)
             {
                 return null;
             }
 
-            var t = component->GetComponentType();
-            return t switch
-            {
-                ComponentType.DragDrop => &((AtkComponentDragDrop*)component)->AtkDragDropInterface,
-                ComponentType.ListItemRenderer => &((AtkComponentListItemRenderer*)component)->AtkDragDropInterface,
-                ComponentType.List => TryGetDdiFromList((AtkComponentList*)component),
-                var _ => null
-            };
+            return component->GetComponentType() == ComponentType.List
+                ? TryGetHoveredListDdi((AtkComponentList*)component)
+                : TryGetDdiFromComponent(component);
         }
 
-        // Prefer the drag-drop interface directly from event data when present.
-        // IMPORTANT: only trust DragDropData for actual drag-drop event types; for MouseOver it can contain garbage.
         var isDragDropEvent =
             eventType is AtkEventType.DragDropBegin or
                 AtkEventType.DragDropCanAcceptCheck or
@@ -156,15 +117,11 @@ internal static unsafe class DragDropHelpers
 
         ddi = (isDragDropEvent && eventData != null) ? eventData->DragDropData.DragDropInterface : null;
 
-        // Some drag-drop events (notably DragDropRollOver) provide a ComponentNode but not a DragDropInterface.
-        // IMPORTANT: never read DragDropData.ComponentNode for non-dragdrop events (AtkEventData is a union).
         if (ddi == null && isDragDropEvent && eventData != null && eventData->DragDropData.ComponentNode != null)
         {
             try
             {
-                var compNode = eventData->DragDropData.ComponentNode;
-                var component = compNode->Component;
-                ddi = TryGetDdiFromComponent(component);
+                ddi = TryGetDdiFromComponentOrHoveredList(eventData->DragDropData.ComponentNode->Component);
             }
             catch
             {
@@ -172,18 +129,15 @@ internal static unsafe class DragDropHelpers
             }
         }
 
-        // Fallback: some event types provide MouseData, but the target is still a DragDrop component.
         if (ddi == null)
         {
             var atkEvent = (AtkEvent*)recv.AtkEvent;
             if (atkEvent != null && atkEvent->Node != null)
             {
-                var node = atkEvent->Node;
-                var compNode = node->GetAsAtkComponentNode();
+                var compNode = atkEvent->Node->GetAsAtkComponentNode();
                 if (compNode != null)
                 {
-                    var component = compNode->Component;
-                    ddi = TryGetDdiFromComponent(component);
+                    ddi = TryGetDdiFromComponentOrHoveredList(compNode->Component);
                 }
             }
         }
@@ -230,7 +184,6 @@ internal static unsafe class DragDropHelpers
                 return preferredSlot;
             }
 
-            // Prefer the hovered slot when in range AND it contains an item.
             if (preferredSlot >= 0 && preferredSlot < c->Size)
             {
                 var it0 = c->GetInventorySlot(preferredSlot);
@@ -240,7 +193,6 @@ internal static unsafe class DragDropHelpers
                 }
             }
 
-            // Fallback: find the first slot with an item.
             for (var i = 0; i < c->Size; i++)
             {
                 var it = c->GetInventorySlot(i);

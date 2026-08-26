@@ -11,12 +11,7 @@ public sealed unsafe partial class QuickTransferPlugin
     {
         try
         {
-            if (!Configuration.EnableCompanyChest)
-            {
-                return;
-            }
-
-            if (!pendingCompanyChestNumericArmed)
+            if (!Configuration.EnableCompanyChest || pendingNumericKind == PendingNumericKind.None)
             {
                 return;
             }
@@ -26,7 +21,6 @@ public sealed unsafe partial class QuickTransferPlugin
                 return;
             }
 
-            // Only touch this dialog if the Company Chest is open (avoid affecting unrelated InputNumeric uses).
             if (!InventoryHelpers.IsCompanyChestOpen())
             {
                 return;
@@ -49,27 +43,20 @@ public sealed unsafe partial class QuickTransferPlugin
                 Svc.Log.Information($"[QuickTransfer] InputNumeric PreSetup (armed): AtkValueCount={count}");
             }
 
-            // Guard against cross-confirmation: only touch the prompt we intended (store/remove/sell).
-            if (pendingNumericKind != PendingNumericKind.None)
+            var prompt = values[6].Type is AtkValueType.String or AtkValueType.ManagedString ? AtkValueHelpers.ReadAtkValueString(values[6]) : string.Empty;
+            if (pendingNumericKind == PendingNumericKind.Store && !prompt.Contains("store", StringComparison.OrdinalIgnoreCase))
             {
-                var prompt = values[6].Type is AtkValueType.String or AtkValueType.ManagedString ? AtkValueHelpers.ReadAtkValueString(values[6]) : string.Empty;
-                if (pendingNumericKind == PendingNumericKind.Store && !prompt.Contains("store", StringComparison.OrdinalIgnoreCase))
-                {
-                    return;
-                }
-                if (pendingNumericKind == PendingNumericKind.Remove && !prompt.Contains("remove", StringComparison.OrdinalIgnoreCase))
-                {
-                    return;
-                }
-                if (pendingNumericKind == PendingNumericKind.Sell && !prompt.Contains("sell", StringComparison.OrdinalIgnoreCase))
-                {
-                    return;
-                }
-                // For "Move" we accept any prompt while the Company Chest is open (used for internal stack/organize moves).
+                return;
+            }
+            if (pendingNumericKind == PendingNumericKind.Remove && !prompt.Contains("remove", StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+            if (pendingNumericKind == PendingNumericKind.Sell && !prompt.Contains("sell", StringComparison.OrdinalIgnoreCase))
+            {
+                return;
             }
 
-            // Standard InputNumeric layout (also used by SimpleTweaks):
-            // [2]=min (UInt), [3]=max (UInt), [4]=default (UInt), [6]=prompt text (String)
             if (values[2].Type != AtkValueType.UInt || values[3].Type != AtkValueType.UInt || values[4].Type != AtkValueType.UInt)
             {
                 if (Configuration.DebugMode)
@@ -83,27 +70,25 @@ public sealed unsafe partial class QuickTransferPlugin
             var max = values[3].UInt;
             var desired = max < min ? min : max;
 
-            // Log current/default if present.
             if (Configuration.DebugMode)
             {
                 var curStr = values[5].Type == AtkValueType.UInt ? values[5].UInt.ToString() : "n/a";
                 Svc.Log.Information($"[QuickTransfer] InputNumeric PreSetup: min={min}, max={max}, default={values[4].UInt}, current={curStr}");
             }
 
-            values[4].UInt = desired; // default
+            values[4].UInt = desired;
             switch (values[5].Type)
             {
                 case AtkValueType.UInt:
-                    values[5].UInt = desired; // some layouts have current (UInt)
+                    values[5].UInt = desired;
                     break;
                 case AtkValueType.String or AtkValueType.ManagedString or AtkValueType.ConstString:
-                    AtkValueHelpers.WriteUtf8InPlace(values[5].String, desired.ToString()); // some builds use String current
+                    AtkValueHelpers.WriteUtf8InPlace(values[5].String, desired.ToString());
                     break;
             }
 
             if (Configuration.DebugMode)
             {
-                var prompt = values[6].Type is AtkValueType.String or AtkValueType.ManagedString ? AtkValueHelpers.ReadAtkValueString(values[6]) : string.Empty;
                 Svc.Log.Information($"[QuickTransfer] InputNumeric PreSetup: prompt='{prompt}', min={min}, max={max}, setDefault={desired}");
             }
         }
@@ -132,7 +117,6 @@ public sealed unsafe partial class QuickTransferPlugin
             var promptVal = inputNumeric->AtkValues + 6;
             var prompt = promptVal->Type is AtkValueType.String or AtkValueType.ManagedString ? AtkValueHelpers.ReadAtkValueString(*promptVal) : string.Empty;
 
-            // Guard: only confirm prompts we expect.
             if (kind == PendingNumericKind.Store && !prompt.Contains("store", StringComparison.OrdinalIgnoreCase))
             {
                 return false;
@@ -141,24 +125,13 @@ public sealed unsafe partial class QuickTransferPlugin
             {
                 return false;
             }
-            // Trade dialogs may be localized; if we're in Trade mode and Trade window is open, accept it
-            // (similar to how Split works - we trust the context rather than requiring exact prompt text)
-            if (kind == PendingNumericKind.Trade && !prompt.Contains("trade", StringComparison.OrdinalIgnoreCase))
+            if (kind == PendingNumericKind.Trade && !prompt.Contains("trade", StringComparison.OrdinalIgnoreCase) && !InventoryHelpers.IsTradeOpen())
             {
-                // Fallback: if Trade window is open and we're expecting Trade, accept it anyway
-                // (prompt might be localized or say "How many would you like to trade?" etc.)
-                if (!InventoryHelpers.IsTradeOpen())
-                {
-                    return false;
-                }
+                return false;
             }
-            // Vendor sell dialogs may be localized; accept if prompt contains "sell" or vendor is open.
-            if (kind == PendingNumericKind.Sell && !prompt.Contains("sell", StringComparison.OrdinalIgnoreCase))
+            if (kind == PendingNumericKind.Sell && !prompt.Contains("sell", StringComparison.OrdinalIgnoreCase) && !InventoryHelpers.IsVendorOpen())
             {
-                if (!InventoryHelpers.IsVendorOpen())
-                {
-                    return false;
-                }
+                return false;
             }
 
             if (minValue->Type != AtkValueType.UInt || maxValue->Type != AtkValueType.UInt || defaultValue->Type != AtkValueType.UInt)
@@ -169,10 +142,6 @@ public sealed unsafe partial class QuickTransferPlugin
             var min = minValue->UInt;
             var max = maxValue->UInt;
 
-            // Split dialogs are localized and can also be emitted by InventoryExpansion without "split" in the prompt.
-            // Accept if either:
-            // - prompt contains "split" (English), OR
-            // - max matches the expected qty-1 we recorded when arming the Split.
             if (kind == PendingNumericKind.Split && !prompt.Contains("split", StringComparison.OrdinalIgnoreCase))
             {
                 var nowMs = Environment.TickCount64;
@@ -186,9 +155,6 @@ public sealed unsafe partial class QuickTransferPlugin
             uint desired;
             if (pendingCompanyChestNumericHalf)
             {
-                // Split/remove half as evenly as possible.
-                // - Split: max is usually (qty-1), so use (max+1)/2.
-                // - Remove: max is usually qty, so use max/2.
                 if (kind == PendingNumericKind.Remove && max <= 1)
                 {
                     return false;
@@ -206,7 +172,6 @@ public sealed unsafe partial class QuickTransferPlugin
             }
             else
             {
-                // Default: max (clamped).
                 desired = max < min ? min : max;
             }
 
@@ -231,7 +196,6 @@ public sealed unsafe partial class QuickTransferPlugin
                 ? AtkValueHelpers.ReadAtkValueString(*currentValue)
                 : string.Empty;
 
-            // Many InputNumeric uses have both "default" and "current" values; set both so OK uses max.
             defaultValue->UInt = desired;
             if (currentValue != null)
             {
@@ -241,15 +205,10 @@ public sealed unsafe partial class QuickTransferPlugin
                 }
                 else if (currentValue->Type is AtkValueType.String or AtkValueType.ManagedString or AtkValueType.ConstString)
                 {
-                    // This dialog uses a String "current quantity" slot on your client build.
-                    // Overwrite the existing buffer in-place (max is <= 999 so this is safe).
-                    var s = desired.ToString();
-                    AtkValueHelpers.WriteUtf8InPlace(currentValue->String, s);
+                    AtkValueHelpers.WriteUtf8InPlace(currentValue->String, desired.ToString());
                 }
             }
 
-            // Critical: Some builds don't actually use AtkValues for the editable quantity; they use the NumericInput component's Raw/Evaluated strings.
-            // Set that too, if present, so the OK action applies "desired" instead of a stale value (e.g. 2).
             TrySetInputNumericComponentValue(inputNumeric, desired);
 
             if (Configuration.DebugMode)
@@ -313,20 +272,13 @@ public sealed unsafe partial class QuickTransferPlugin
 
                 var ni = (AtkComponentNumericInput*)comp;
 
-                // RawString / EvaluatedString are Utf8String.
                 AtkValueHelpers.WriteUtf8StringInPlace(&ni->RawString, desiredStr);
                 AtkValueHelpers.WriteUtf8StringInPlace(&ni->EvaluatedString, desiredStr);
-
-                // The authoritative value used by OK is the numeric input's internal Value.
-                // Setting strings alone can leave the internal Value at its old value (commonly 2).
                 ni->SetValue((int)desired);
-
-                // Update cursor to end.
                 ni->CursorPos = (ushort)desiredStr.Length;
                 ni->SelectionStart = ni->CursorPos;
                 ni->SelectionEnd = ni->CursorPos;
 
-                // Only need first numeric input.
                 return;
             }
         }

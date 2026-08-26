@@ -11,7 +11,6 @@ public sealed class Configuration : IPluginConfiguration
     [NonSerialized] private IDalamudPluginInterface? pluginInterface;
 
     public bool Enabled { get; set; } = true;
-    // Default OFF (explicitly requested).
     public bool DebugMode { get; set; }
     public int TransferCooldownMs { get; set; } = 200;
 
@@ -21,7 +20,7 @@ public sealed class Configuration : IPluginConfiguration
     public bool EnableCompanyChest { get; set; } = true;
     public bool AutoConfirmCompanyChestQuantity { get; set; } = true;
     public bool CompanyChestDepositEmptySlotsFirst { get; set; } = true;
-    public int CompanyChestCompartments { get; set; } = 3; // 3..5 (default game starts at 3)
+    public int CompanyChestCompartments { get; set; } = 3;
 
     public bool EnableVendorQuickSell { get; set; } = true;
     public bool AutoConfirmVendorSell { get; set; } = true;

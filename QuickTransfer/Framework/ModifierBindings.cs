@@ -1,7 +1,10 @@
 using Dalamud.Game.ClientState.Keys;
+using ECommons;
+using System.Diagnostics;
+using System.Runtime.InteropServices;
 namespace QuickTransfer.Framework;
 
-public static class ModifierBindings
+public static partial class ModifierBindings
 {
     private const int VkMiddleButton = 0x04;
     private const int VkXButton1 = 0x05;
@@ -50,17 +53,17 @@ public static class ModifierBindings
 
     public static bool IsConfiguredMiddleClickDown(Configuration configuration)
     {
-        if (configuration.MiddleClickUseMButton && CursorHoverHelpers.IsMouseButtonDown(VkMiddleButton))
+        if (configuration.MiddleClickUseMButton && IsMouseButtonDown(VkMiddleButton))
         {
             return true;
         }
 
-        if (configuration.MiddleClickUseXButton1 && CursorHoverHelpers.IsMouseButtonDown(VkXButton1))
+        if (configuration.MiddleClickUseXButton1 && IsMouseButtonDown(VkXButton1))
         {
             return true;
         }
 
-        return configuration.MiddleClickUseXButton2 && CursorHoverHelpers.IsMouseButtonDown(VkXButton2);
+        return configuration.MiddleClickUseXButton2 && IsMouseButtonDown(VkXButton2);
     }
 
     public static bool IsMiddleClickEventMask(byte mouseButtonId, byte dragDropMouseButtonId, Configuration configuration) =>
@@ -131,5 +134,69 @@ public static class ModifierBindings
         }
 
         return false;
+    }
+
+    internal static bool IsMouseButtonDown(int virtualKey)
+    {
+        try
+        {
+            return GenericHelpers.IsKeyPressed(virtualKey);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    internal static bool TryGetClientCursorPos(out short x, out short y)
+    {
+        x = 0;
+        y = 0;
+        try
+        {
+            if (!GetCursorPos(out var p))
+            {
+                return false;
+            }
+
+            var hwnd = Process.GetCurrentProcess().MainWindowHandle;
+            if (hwnd == nint.Zero)
+            {
+                return false;
+            }
+
+            if (!ScreenToClient(hwnd, ref p))
+            {
+                return false;
+            }
+
+            if (p.X < short.MinValue || p.X > short.MaxValue || p.Y < short.MinValue || p.Y > short.MaxValue)
+            {
+                return false;
+            }
+
+            x = (short)p.X;
+            y = (short)p.Y;
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    [LibraryImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool GetCursorPos(out Point lpPoint);
+
+    [LibraryImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool ScreenToClient(nint hWnd, ref Point lpPoint);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct Point
+    {
+        public int X;
+        public int Y;
     }
 }
