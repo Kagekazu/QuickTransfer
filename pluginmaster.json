@@ -10,6 +10,7 @@
     "IconUrl": "https://raw.githubusercontent.com/Kagekazu/QuickTransfer/main/images/icon.png",
     "RepoUrl": "https://github.com/Kagekazu/QuickTransfer",
     "DalamudApiLevel": 15,
+    "LoadSync": false,
     "Tags": [
       "inventory",
       "utility",
