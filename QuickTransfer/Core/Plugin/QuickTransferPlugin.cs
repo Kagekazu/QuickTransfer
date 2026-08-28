@@ -18,13 +18,15 @@ using ModifierMode = QuickTransfer.Framework.ContextMenuHandler.ModifierMode;
 
 namespace QuickTransfer;
 
-public sealed unsafe partial class QuickTransferPlugin : IDalamudPlugin
+public sealed unsafe partial class QuickTransferPlugin : IAsyncDalamudPlugin
 {
     private readonly Dictionary<int, Dictionary<int, InventoryType>> companyChestSelectedTabCandidates = [];
     private readonly Dictionary<uint, (InventoryType Type, int Slot, int A4)> lastGoodContextTargetByAddonId = [];
     private readonly Dictionary<(uint OwnerAddonId, uint InventoryType), int> observedContextA4 = [];
-    private readonly EzHook<AgentInventoryContext.Delegates.OpenForItemSlot>? openForItemSlotHook;
-    private readonly PluginUI pluginUi;
+    private readonly IDalamudPluginInterface pluginInterface;
+    private EzHook<AgentInventoryContext.Delegates.OpenForItemSlot>? openForItemSlotHook;
+    private PluginUI pluginUi = null!;
+    private bool ecommonsInitialized;
 
     private readonly WindowSystem windowSystem = new("QuickTransfer");
     private int companyChestBusyHits;
@@ -81,7 +83,17 @@ public sealed unsafe partial class QuickTransferPlugin : IDalamudPlugin
 
     public QuickTransferPlugin(IDalamudPluginInterface pluginInterface)
     {
+        this.pluginInterface = pluginInterface;
+    }
+
+    public Configuration Configuration { get; private set; } = null!;
+
+    public Task LoadAsync(CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
         ECommonsMain.Init(pluginInterface, this);
+        ecommonsInitialized = true;
 
         Configuration = Svc.PluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
         Configuration.Initialize(Svc.PluginInterface);
@@ -186,32 +198,60 @@ public sealed unsafe partial class QuickTransferPlugin : IDalamudPlugin
                 Svc.Log.Warning(ex, "[QuickTransfer] Failed to enumerate InventoryType names (debug).");
             }
         }
+
+        return Task.CompletedTask;
     }
-    public Configuration Configuration { get; }
 
-    public void Dispose()
+    public ValueTask DisposeAsync()
     {
-        Configuration.PersistIfDirty();
-
-        Svc.Framework.Update -= OnFrameworkUpdate;
-        Svc.ContextMenu.OnMenuOpened -= OnContextMenuOpened;
-        Svc.Chat.ChatMessage -= OnChatMessage;
-        Svc.AddonLifecycle.UnregisterListener(AddonEvent.PreSetup, QuickTransferConstants.InputNumericAddonName, OnInputNumericPreSetup);
-        Svc.AddonLifecycle.UnregisterListener(AddonEvent.PreDraw, QuickTransferConstants.ContextMenuAddonName, OnAddonPreDraw);
-        Svc.AddonLifecycle.UnregisterListener(AddonEvent.PreDraw, QuickTransferConstants.InputNumericAddonName, OnAddonPreDraw);
-        foreach (var name in QuickTransferConstants.ReceiveEventAddonNames)
+        if (!ecommonsInitialized)
         {
-            Svc.AddonLifecycle.UnregisterListener(AddonEvent.PreReceiveEvent, name, OnAddonReceiveEvent);
+            return ValueTask.CompletedTask;
         }
 
-        Svc.PluginInterface.UiBuilder.Draw -= windowSystem.Draw;
-        Svc.PluginInterface.UiBuilder.OpenConfigUi -= OpenConfigUi;
-        Svc.PluginInterface.UiBuilder.OpenMainUi -= OpenConfigUi;
+        try
+        {
+            Configuration?.PersistIfDirty();
+        }
+        catch
+        {
+            // ignore
+        }
 
-        windowSystem.RemoveAllWindows();
-        Svc.Commands.RemoveHandler(QuickTransferConstants.CommandName);
+        try
+        {
+            Svc.Framework.Update -= OnFrameworkUpdate;
+            Svc.ContextMenu.OnMenuOpened -= OnContextMenuOpened;
+            Svc.Chat.ChatMessage -= OnChatMessage;
+            Svc.AddonLifecycle.UnregisterListener(AddonEvent.PreSetup, QuickTransferConstants.InputNumericAddonName, OnInputNumericPreSetup);
+            Svc.AddonLifecycle.UnregisterListener(AddonEvent.PreDraw, QuickTransferConstants.ContextMenuAddonName, OnAddonPreDraw);
+            Svc.AddonLifecycle.UnregisterListener(AddonEvent.PreDraw, QuickTransferConstants.InputNumericAddonName, OnAddonPreDraw);
+            foreach (var name in QuickTransferConstants.ReceiveEventAddonNames)
+            {
+                Svc.AddonLifecycle.UnregisterListener(AddonEvent.PreReceiveEvent, name, OnAddonReceiveEvent);
+            }
+
+            Svc.PluginInterface.UiBuilder.Draw -= windowSystem.Draw;
+            Svc.PluginInterface.UiBuilder.OpenConfigUi -= OpenConfigUi;
+            Svc.PluginInterface.UiBuilder.OpenMainUi -= OpenConfigUi;
+
+            windowSystem.RemoveAllWindows();
+            Svc.Commands.RemoveHandler(QuickTransferConstants.CommandName);
+        }
+        catch (Exception ex)
+        {
+            try
+            {
+                Svc.Log.Warning(ex, "[QuickTransfer] Error while unregistering during dispose.");
+            }
+            catch
+            {
+                // ignore
+            }
+        }
 
         ECommonsMain.Dispose();
+        return ValueTask.CompletedTask;
     }
 
     private void ArmSuppressContextMenu(long now, int durationMs = 250)
