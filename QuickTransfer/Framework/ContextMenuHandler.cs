@@ -28,6 +28,21 @@ internal static unsafe class ContextMenuHandler
         Alt
     }
 
+    // Each menu row is assigned to the first action it matches in this order; Trade rows are also checked against Sell.
+    private static readonly AutoContextAction[] MatchOrder =
+    [
+        AutoContextAction.RemoveAllFromSaddlebag,
+        AutoContextAction.RemoveFromCompanyChest,
+        AutoContextAction.AddAllToSaddlebag,
+        AutoContextAction.PlaceInArmouryChest,
+        AutoContextAction.ReturnToInventory,
+        AutoContextAction.EntrustToRetainer,
+        AutoContextAction.RetrieveFromRetainer,
+        AutoContextAction.Split,
+        AutoContextAction.Trade,
+        AutoContextAction.Sell
+    ];
+
     public static bool ContextLabelMatches(AutoContextAction desiredAction, string menuText)
     {
         var t = menuText.Trim();
@@ -44,7 +59,7 @@ internal static unsafe class ContextMenuHandler
                 Has(t, "Remove All") && Has(t, "Saddlebag") ||
                 Has(t, "Remove") && Has(t, "Saddlebag") ||
                 t.Equals("Remove All", StringComparison.OrdinalIgnoreCase) ||
-                (Has(t, "Retrieve") || Has(t, "Take out") || Has(t, "Take Out")) && Has(t, "Saddlebag"),
+                (Has(t, "Retrieve") || Has(t, "Take out")) && Has(t, "Saddlebag"),
 
             AutoContextAction.PlaceInArmouryChest =>
                 t.Equals("Place in Armoury Chest", StringComparison.OrdinalIgnoreCase) ||
@@ -68,20 +83,16 @@ internal static unsafe class ContextMenuHandler
                 Has(t, "Withdraw") && (Has(t, "Company") || Has(t, "Chest")),
 
             AutoContextAction.Split =>
-                t.Equals("Split", StringComparison.OrdinalIgnoreCase) ||
                 t.StartsWith("Split", StringComparison.OrdinalIgnoreCase),
 
             AutoContextAction.Sort =>
-                t.Equals("Sort", StringComparison.OrdinalIgnoreCase) ||
                 t.StartsWith("Sort", StringComparison.OrdinalIgnoreCase),
 
             AutoContextAction.Trade =>
-                t.Equals("Trade", StringComparison.OrdinalIgnoreCase) ||
                 t.StartsWith("Trade", StringComparison.OrdinalIgnoreCase) ||
                 Has(t, "Trade") && Has(t, "Item"),
 
             AutoContextAction.Sell =>
-                t.Equals("Sell", StringComparison.OrdinalIgnoreCase) ||
                 t.StartsWith("Sell", StringComparison.OrdinalIgnoreCase) ||
                 Has(t, "Sell") && Has(t, "Item"),
 
@@ -111,7 +122,6 @@ internal static unsafe class ContextMenuHandler
         }
         catch
         {
-            /* ignore */
         }
 
         if (addon is null)
@@ -146,7 +156,6 @@ internal static unsafe class ContextMenuHandler
         }
         catch
         {
-            /* ignore */
         }
 
         try
@@ -159,22 +168,16 @@ internal static unsafe class ContextMenuHandler
         }
         catch
         {
-            /* ignore */
         }
     }
 
     public static void CloseContextMenuAddon(AgentInventoryContext* agent, AtkUnitBase* contextMenuAddon)
     {
         try { agent->AgentInterface.Hide(); }
-        catch
-        {
-            /* ignore */
-        }
+        catch { }
+
         try { contextMenuAddon->Hide(false, true, 0); }
-        catch
-        {
-            /* ignore */
-        }
+        catch { }
     }
 
     public static bool TryAutoSelectAndClose(
@@ -189,179 +192,101 @@ internal static unsafe class ContextMenuHandler
         chosenText = string.Empty;
         chosenIndex = -1;
 
-        var foundAny = false;
-
-        int removeIdx = -1, addIdx = -1, placeIdx = -1, returnIdx = -1, entrustIdx = -1, retrieveIdx = -1, companyRemoveIdx = -1, splitIdx = -1, tradeIdx = -1, sellIdx = -1;
-        string? removeTxt = null, addTxt = null, placeTxt = null, returnTxt = null, entrustTxt = null, retrieveTxt = null, companyRemoveTxt = null, splitTxt = null, tradeTxt = null, sellTxt = null;
-
-        var max = Math.Min(agent->ContextItemCount, 64);
-        for (var i = 0; i < max; i++)
-        {
-            var param = agent->EventParams[agent->ContexItemStartIndex + i];
-            if (param.Type is not (AtkValueType.String or AtkValueType.ManagedString))
-            {
-                continue;
-            }
-
-            var text = AtkValueHelpers.ReadAtkValueString(param);
-            if (string.IsNullOrWhiteSpace(text))
-            {
-                continue;
-            }
-
-            foundAny = true;
-
-            if (removeIdx < 0 && ContextLabelMatches(AutoContextAction.RemoveAllFromSaddlebag, text))
-            {
-                removeIdx = i;
-                removeTxt = text;
-                continue;
-            }
-
-            if (companyRemoveIdx < 0 && ContextLabelMatches(AutoContextAction.RemoveFromCompanyChest, text))
-            {
-                companyRemoveIdx = i;
-                companyRemoveTxt = text;
-                continue;
-            }
-
-            if (addIdx < 0 && ContextLabelMatches(AutoContextAction.AddAllToSaddlebag, text))
-            {
-                addIdx = i;
-                addTxt = text;
-                continue;
-            }
-
-            if (placeIdx < 0 && ContextLabelMatches(AutoContextAction.PlaceInArmouryChest, text))
-            {
-                placeIdx = i;
-                placeTxt = text;
-                continue;
-            }
-
-            if (returnIdx < 0 && ContextLabelMatches(AutoContextAction.ReturnToInventory, text))
-            {
-                returnIdx = i;
-                returnTxt = text;
-                continue;
-            }
-
-            if (entrustIdx < 0 && ContextLabelMatches(AutoContextAction.EntrustToRetainer, text))
-            {
-                entrustIdx = i;
-                entrustTxt = text;
-                continue;
-            }
-
-            if (retrieveIdx < 0 && ContextLabelMatches(AutoContextAction.RetrieveFromRetainer, text))
-            {
-                retrieveIdx = i;
-                retrieveTxt = text;
-                continue;
-            }
-
-            if (splitIdx < 0 && ContextLabelMatches(AutoContextAction.Split, text))
-            {
-                splitIdx = i;
-                splitTxt = text;
-                continue;
-            }
-
-            if (tradeIdx < 0 && ContextLabelMatches(AutoContextAction.Trade, text))
-            {
-                tradeIdx = i;
-                tradeTxt = text;
-            }
-
-            if (sellIdx < 0 && ContextLabelMatches(AutoContextAction.Sell, text))
-            {
-                sellIdx = i;
-                sellTxt = text;
-            }
-        }
-
-        if (!foundAny)
+        var items = ReadMenuItems(agent, 64);
+        if (items.Count == 0)
         {
             return false;
         }
 
-        var saddlebagOpen = InventoryHelpers.IsSaddlebagOpen();
-        var retainerOpen = InventoryHelpers.IsRetainerOpen();
-        var companyChestOpen = InventoryHelpers.IsCompanyChestOpen();
-        var tradeOpen = InventoryHelpers.IsTradeOpen();
-        var vendorOpen = InventoryHelpers.IsVendorOpen();
-
-        (int idx, string? txt) chosen;
-        if (mode == ModifierMode.Alt)
+        Dictionary<AutoContextAction, (int Index, string Text)> found = [];
+        foreach (var (index, text) in items)
         {
-            chosen = splitIdx >= 0 ? (splitIdx, splitTxt) : (-1, null);
-        }
-        else if (mode == ModifierMode.Shift && vendorOpen && configuration.EnableVendorQuickSell)
-        {
-            chosen = sellIdx >= 0 ? (sellIdx, sellTxt) : (-1, null);
-        }
-        else if (mode == ModifierMode.Shift && tradeOpen)
-        {
-            chosen = tradeIdx >= 0 ? (tradeIdx, tradeTxt) : (-1, null);
-        }
-        else if (mode == ModifierMode.Shift && companyChestOpen && configuration.EnableCompanyChest)
-        {
-            chosen = companyRemoveIdx >= 0 ? (companyRemoveIdx, companyRemoveTxt) : (-1, null);
-        }
-        else if (mode == ModifierMode.Ctrl)
-        {
-            chosen = returnIdx >= 0 ? (returnIdx, returnTxt) :
-                placeIdx >= 0 ? (placeIdx, placeTxt) :
-                (-1, null);
-        }
-        else if (retainerOpen || entrustIdx >= 0 || retrieveIdx >= 0)
-        {
-            if (saddlebagOpen)
+            foreach (var action in MatchOrder)
             {
-                chosen = addIdx >= 0 ? (addIdx, addTxt) :
-                    entrustIdx >= 0 ? (entrustIdx, entrustTxt) :
-                    removeIdx >= 0 ? (removeIdx, removeTxt) :
-                    (-1, null);
+                if (found.ContainsKey(action) || !ContextLabelMatches(action, text))
+                {
+                    continue;
+                }
+
+                found[action] = (index, text);
+                if (action != AutoContextAction.Trade)
+                {
+                    break;
+                }
+            }
+        }
+
+        foreach (var action in GetActionPreference(mode, configuration, found))
+        {
+            if (!found.TryGetValue(action, out var hit))
+            {
+                continue;
+            }
+
+            AtkValueHelpers.GenerateCallback(contextMenuAddon, 0, hit.Index, 0U, 0, 0);
+
+            // Split and Trade open a follow-up dialog; closing the menu immediately can cancel it.
+            if (ContextLabelMatches(AutoContextAction.Split, hit.Text) ||
+                ContextLabelMatches(AutoContextAction.Trade, hit.Text))
+            {
+                pendingCloseContextMenuAtMs = Environment.TickCount64 + 3000;
             }
             else
             {
-                chosen = retrieveIdx >= 0 ? (retrieveIdx, retrieveTxt) :
-                    entrustIdx >= 0 ? (entrustIdx, entrustTxt) :
-                    (-1, null);
+                CloseContextMenuAddon(agent, contextMenuAddon);
             }
-        }
-        else if (saddlebagOpen)
-        {
-            chosen = removeIdx >= 0 ? (removeIdx, removeTxt) :
-                addIdx >= 0 ? (addIdx, addTxt) :
-                (-1, null);
-        }
-        else
-        {
-            chosen = placeIdx >= 0 ? (placeIdx, placeTxt) :
-                returnIdx >= 0 ? (returnIdx, returnTxt) :
-                (-1, null);
+
+            chosenText = hit.Text;
+            chosenIndex = hit.Index;
+            return true;
         }
 
-        if (chosen.idx < 0 || string.IsNullOrWhiteSpace(chosen.txt))
+        return false;
+    }
+
+    private static AutoContextAction[] GetActionPreference(
+        ModifierMode mode,
+        Configuration configuration,
+        Dictionary<AutoContextAction, (int Index, string Text)> found)
+    {
+        if (mode == ModifierMode.Alt)
         {
-            return false;
+            return [AutoContextAction.Split];
         }
 
-        AtkValueHelpers.GenerateCallback(contextMenuAddon, 0, chosen.idx, 0U, 0, 0);
-
-        if (chosen.txt != null && (ContextLabelMatches(AutoContextAction.Split, chosen.txt) || ContextLabelMatches(AutoContextAction.Trade, chosen.txt)))
+        if (mode == ModifierMode.Shift && configuration.EnableVendorQuickSell && InventoryHelpers.IsVendorOpen())
         {
-            pendingCloseContextMenuAtMs = Environment.TickCount64 + 3000;
-        }
-        else
-        {
-            CloseContextMenuAddon(agent, contextMenuAddon);
+            return [AutoContextAction.Sell];
         }
 
-        chosenText = chosen.txt!;
-        chosenIndex = chosen.idx;
-        return true;
+        if (mode == ModifierMode.Shift && InventoryHelpers.IsTradeOpen())
+        {
+            return [AutoContextAction.Trade];
+        }
+
+        if (mode == ModifierMode.Shift && configuration.EnableCompanyChest && InventoryHelpers.IsCompanyChestOpen())
+        {
+            return [AutoContextAction.RemoveFromCompanyChest];
+        }
+
+        if (mode == ModifierMode.Ctrl)
+        {
+            return [AutoContextAction.ReturnToInventory, AutoContextAction.PlaceInArmouryChest];
+        }
+
+        var saddlebagOpen = InventoryHelpers.IsSaddlebagOpen();
+        if (InventoryHelpers.IsRetainerOpen() ||
+            found.ContainsKey(AutoContextAction.EntrustToRetainer) ||
+            found.ContainsKey(AutoContextAction.RetrieveFromRetainer))
+        {
+            return saddlebagOpen
+                ? [AutoContextAction.AddAllToSaddlebag, AutoContextAction.EntrustToRetainer, AutoContextAction.RemoveAllFromSaddlebag]
+                : [AutoContextAction.RetrieveFromRetainer, AutoContextAction.EntrustToRetainer];
+        }
+
+        return saddlebagOpen
+            ? [AutoContextAction.RemoveAllFromSaddlebag, AutoContextAction.AddAllToSaddlebag]
+            : [AutoContextAction.PlaceInArmouryChest, AutoContextAction.ReturnToInventory];
     }
 
     public static bool TrySelectSortAndClose(AgentInventoryContext* agent, AtkUnitBase* contextMenuAddon, out string chosenText, out int chosenIndex)
@@ -369,26 +294,12 @@ internal static unsafe class ContextMenuHandler
         chosenText = string.Empty;
         chosenIndex = -1;
 
-        var undoSortIdx = -1;
-
-        var max = Math.Min(agent->ContextItemCount, 64);
-        for (var i = 0; i < max; i++)
+        var hasUndoSort = false;
+        foreach (var (index, text) in ReadMenuItems(agent, 64))
         {
-            var param = agent->EventParams[agent->ContexItemStartIndex + i];
-            if (param.Type is not (AtkValueType.String or AtkValueType.ManagedString))
+            if (text.Trim().Equals("Undo Sort", StringComparison.OrdinalIgnoreCase))
             {
-                continue;
-            }
-
-            var text = AtkValueHelpers.ReadAtkValueString(param);
-            if (string.IsNullOrWhiteSpace(text))
-            {
-                continue;
-            }
-
-            if (undoSortIdx < 0 && text.Trim().Equals("Undo Sort", StringComparison.OrdinalIgnoreCase))
-            {
-                undoSortIdx = i;
+                hasUndoSort = true;
             }
 
             if (!ContextLabelMatches(AutoContextAction.Sort, text))
@@ -396,22 +307,18 @@ internal static unsafe class ContextMenuHandler
                 continue;
             }
 
-            AtkValueHelpers.GenerateCallback(contextMenuAddon, 0, i, 0U, 0, 0);
+            AtkValueHelpers.GenerateCallback(contextMenuAddon, 0, index, 0U, 0, 0);
             CloseContextMenuAddon(agent, contextMenuAddon);
             chosenText = text;
-            chosenIndex = i;
+            chosenIndex = index;
             return true;
         }
 
-        if (undoSortIdx >= 0)
+        // Only "Undo Sort" is offered when the container is already sorted.
+        if (hasUndoSort)
         {
-            try { CloseContextMenuAddon(agent, contextMenuAddon); }
-            catch
-            {
-                /* ignore */
-            }
+            CloseContextMenuAddon(agent, contextMenuAddon);
             chosenText = "Already sorted";
-            chosenIndex = -1;
             return true;
         }
 
@@ -422,27 +329,36 @@ internal static unsafe class ContextMenuHandler
     {
         try
         {
-            var max = Math.Min(Math.Min(agent->ContextItemCount, 64), maxItems);
-            for (var i = 0; i < max; i++)
+            foreach (var (index, text) in ReadMenuItems(agent, maxItems))
             {
-                var param = agent->EventParams[agent->ContexItemStartIndex + i];
-                if (param.Type is not (AtkValueType.String or AtkValueType.ManagedString))
-                {
-                    continue;
-                }
-
-                var text = AtkValueHelpers.ReadAtkValueString(param);
-                if (string.IsNullOrWhiteSpace(text))
-                {
-                    continue;
-                }
-
-                Svc.Log.Information($"[QuickTransfer] Menu idx={i}: '{text}'");
+                Svc.Log.Information($"[QuickTransfer] Menu idx={index}: '{text}'");
             }
         }
         catch (Exception ex)
         {
             Svc.Log.Warning(ex, "[QuickTransfer] Failed to dump context menu.");
         }
+    }
+
+    private static List<(int Index, string Text)> ReadMenuItems(AgentInventoryContext* agent, int maxItems)
+    {
+        List<(int Index, string Text)> items = [];
+        var max = Math.Min(Math.Min(agent->ContextItemCount, 64), maxItems);
+        for (var i = 0; i < max; i++)
+        {
+            var param = agent->EventParams[agent->ContexItemStartIndex + i];
+            if (param.Type is not (AtkValueType.String or AtkValueType.ManagedString))
+            {
+                continue;
+            }
+
+            var text = AtkValueHelpers.ReadAtkValueString(param);
+            if (!string.IsNullOrWhiteSpace(text))
+            {
+                items.Add((i, text));
+            }
+        }
+
+        return items;
     }
 }

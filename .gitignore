@@ -13,7 +13,6 @@
 x64/
 x86/
 [Bb]uild/
-build/
 [Bb]in/
 [Oo]bj/
 
@@ -78,7 +77,6 @@ App.config
 .Spotlight-V100
 .Trashes
 ehthumbs.db
-Thumbs.db
 
 # Game data
 sqpack/
