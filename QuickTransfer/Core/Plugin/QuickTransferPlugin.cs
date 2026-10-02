@@ -337,7 +337,7 @@ public sealed unsafe partial class QuickTransferPlugin(IDalamudPluginInterface p
         {
             if (Configuration.DebugMode)
             {
-                Svc.Log.Information("[QuickTransfer] Yielding quick transfer — retainer sell list open.");
+                Svc.Log.Information("[QuickTransfer] Yielding quick transfer - retainer sell list open.");
             }
 
             return;
@@ -452,7 +452,7 @@ public sealed unsafe partial class QuickTransferPlugin(IDalamudPluginInterface p
             {
                 if (Configuration.DebugMode)
                 {
-                    Svc.Log.Information("[QuickTransfer] Yielding deferred quick transfer — retainer sell list open.");
+                    Svc.Log.Information("[QuickTransfer] Yielding deferred quick transfer - retainer sell list open.");
                 }
 
                 return;
@@ -896,7 +896,7 @@ public sealed unsafe partial class QuickTransferPlugin(IDalamudPluginInterface p
             {
                 if (Configuration.DebugMode)
                 {
-                    Svc.Log.Information("[QuickTransfer] Skipping deferred quick transfer — retainer sell list open.");
+                    Svc.Log.Information("[QuickTransfer] Skipping deferred quick transfer - retainer sell list open.");
                 }
 
                 ProcessDeferredSortMenuClick(now);

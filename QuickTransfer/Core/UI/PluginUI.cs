@@ -226,13 +226,13 @@ public class PluginUI : Window
                 using (ImRaii.Disabled(!config.EnableCompanyChest))
                 {
                     var mmbOrganize = config.EnableCompanyChestMiddleClickOrganize;
-                    if (ImGui.Checkbox("Middle-click organize (stack + compact)", ref mmbOrganize))
+                    if (ImGui.Checkbox("Middle-click organize (stack, compact, sort)", ref mmbOrganize))
                     {
                         config.EnableCompanyChestMiddleClickOrganize = mmbOrganize;
                         config.OnSettingChanged();
                     }
 
-                    Hint("FC chest has no Sort menu — middle-click runs an organize pass on the active tab.");
+                    Hint("FC chest has no Sort menu - middle-click merges partial stacks, closes gaps, and sorts the active tab by item type.");
 
                     var autoConfirmQty = config.AutoConfirmCompanyChestQuantity;
                     if (ImGui.Checkbox("Auto-confirm quantity dialogs", ref autoConfirmQty))
@@ -250,7 +250,7 @@ public class PluginUI : Window
                         config.OnSettingChanged();
                     }
 
-                    Hint("Avoids topping off partial stacks when an empty slot exists — one server check per deposit. Use middle-click organize to stack later.");
+                    Hint("Avoids topping off partial stacks when an empty slot exists - one server check per deposit. Use middle-click organize to stack later.");
 
                     ImGui.Text("Unlocked item tabs");
                     ImGui.SetNextItemWidth(220);
@@ -329,7 +329,7 @@ public class PluginUI : Window
     {
         ImGui.Spacing();
         ImGui.TextWrapped(
-            "QuickTransfer picks existing context menu entries — it does not move items on its own. " +
+            "QuickTransfer picks existing context menu entries - it does not move items on its own. " +
             "If the menu option is not available for that item, nothing happens.");
         ImGui.Spacing();
 
@@ -351,7 +351,7 @@ public class PluginUI : Window
         }
 
         ImGui.Spacing();
-        ImGui.TextColored(MutedColor, "Tip: Brief modifier taps still count — you do not need to hold through the whole menu.");
+        ImGui.TextColored(MutedColor, "Tip: Brief modifier taps still count - you do not need to hold through the whole menu.");
         ImGui.TextColored(MutedColor, "Rebind modifiers in Settings → Keybindings if they clash with other plugins.");
         ImGui.TextColored(MutedColor, "Command: /qt");
     }
@@ -467,7 +467,7 @@ public class PluginUI : Window
     {
         ImGui.BulletText(title);
         ImGui.SameLine(0, 4);
-        ImGui.TextColored(MutedColor, "—");
+        ImGui.TextColored(MutedColor, "-");
         ImGui.SameLine(0, 4);
         ImGui.TextWrapped(detail);
     }
