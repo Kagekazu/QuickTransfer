@@ -11,7 +11,7 @@ Thank you for your interest in contributing!
 
 ## Pull requests
 
-- Keep changes focused — one feature or fix per PR when possible.
+- Keep changes focused - one feature or fix per PR when possible.
 - Match existing code style (nullable enabled, `unsafe` only where needed, minimal comments).
 - Test affected flows in-game before submitting (inventory, saddlebags, retainer, FC chest, vendor, trade).
 - Update README.md if you add or change user-facing behavior.
