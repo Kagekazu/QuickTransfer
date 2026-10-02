@@ -34,6 +34,29 @@ internal static unsafe class InventoryHelpers
         InventoryType.RetainerPage7
     ];
 
+    public static readonly InventoryType[] ArmouryInventoryTypes =
+    [
+        InventoryType.ArmoryMainHand,
+        InventoryType.ArmoryOffHand,
+        InventoryType.ArmoryHead,
+        InventoryType.ArmoryBody,
+        InventoryType.ArmoryHands,
+        InventoryType.ArmoryWaist,
+        InventoryType.ArmoryLegs,
+        InventoryType.ArmoryFeets,
+        InventoryType.ArmoryEar,
+        InventoryType.ArmoryNeck,
+        InventoryType.ArmoryWrist,
+        InventoryType.ArmoryRings,
+        InventoryType.ArmorySoulCrystal
+    ];
+
+    private static readonly HashSet<InventoryType> CompanyChestTypes =
+    [
+        .. Enum.GetValues<InventoryType>()
+            .Where(t => Enum.GetName(t)?.StartsWith("FreeCompanyPage", StringComparison.OrdinalIgnoreCase) == true)
+    ];
+
     private static readonly Dictionary<uint, uint> StackSizeCache = [];
     private static readonly Dictionary<uint, ChestSortParts> ItemSortPartsCache = [];
     private static Dictionary<uint, (uint BaseParam, byte Grade)>? MateriaSortLookup;
@@ -91,10 +114,14 @@ internal static unsafe class InventoryHelpers
             InventoryType.RetainerPage7;
 
     public static bool IsCompanyChestType(InventoryType inventoryType)
-    {
-        var name = Enum.GetName(inventoryType);
-        return !string.IsNullOrEmpty(name) && name.StartsWith("FreeCompanyPage", StringComparison.OrdinalIgnoreCase);
-    }
+        => CompanyChestTypes.Contains(inventoryType);
+
+    public static bool IsSortableContainerType(InventoryType inventoryType)
+        => IsPlayerInventoryType(inventoryType) ||
+           IsArmouryType(inventoryType) ||
+           IsSaddlebagType(inventoryType) ||
+           IsRetainerType(inventoryType) ||
+           IsCompanyChestType(inventoryType);
 
     private static AtkUnitManager* UnitManager
     {
@@ -193,21 +220,21 @@ internal static unsafe class InventoryHelpers
     }
 
     public static bool IsSaddlebagOpen()
-        => IsAddonVisibleAnyIndex("InventoryBuddy") ||
-           IsAddonVisibleAnyIndex("InventoryBuddy2") ||
+        => IsAddonVisibleAnyIndex(QuickTransferConstants.SaddlebagAddonName) ||
+           IsAddonVisibleAnyIndex(QuickTransferConstants.Saddlebag2AddonName) ||
            IsAddonVisibleAnyIndex(QuickTransferConstants.AetherBagsSaddleBagAddonName);
 
     public static bool IsRetainerSellListOpen()
         => IsAddonVisibleAnyIndex(QuickTransferConstants.RetainerSellListAddonName);
 
     public static bool IsRetainerOpen()
-        => IsAddonVisibleAnyIndex("RetainerGrid0") ||
+        => IsAddonVisibleAnyIndex(QuickTransferConstants.RetainerGrid0AddonName) ||
            IsRetainerSellListOpen() ||
-           IsAddonVisibleAnyIndex("RetainerGrid") ||
+           IsAddonVisibleAnyIndex(QuickTransferConstants.RetainerGridAddonName) ||
            IsAddonVisibleAnyIndex(QuickTransferConstants.AetherBagsRetainerAddonName) ||
            IsRetainerAgentActive();
 
-    public static bool IsRetainerAgentActive()
+    private static bool IsRetainerAgentActive()
     {
         try
         {
@@ -244,7 +271,7 @@ internal static unsafe class InventoryHelpers
     }
 
     public static bool IsCompanyChestOpen()
-        => IsAddonVisibleAnyIndex("FreeCompanyChest");
+        => IsAddonVisibleAnyIndex(QuickTransferConstants.FreeCompanyChestAddonName);
 
     public static bool IsTradeOpen()
         => IsAddonVisibleAnyIndex("Trade") || IsAddonVisibleAnyIndex("TradeWindow");
@@ -289,6 +316,7 @@ internal static unsafe class InventoryHelpers
             {
                 return false;
             }
+
             var c = inv->GetInventoryContainer(type);
             return c != null && c->IsLoaded && c->Size > 0;
         }
@@ -296,6 +324,49 @@ internal static unsafe class InventoryHelpers
         {
             return false;
         }
+    }
+
+    public static bool TryFindFirstOccupiedSlot(
+        ReadOnlySpan<InventoryType> containers,
+        out InventoryType type,
+        out int slot)
+    {
+        type = default;
+        slot = -1;
+
+        try
+        {
+            var inv = InventoryManager.Instance();
+            if (inv == null)
+            {
+                return false;
+            }
+
+            foreach (var t in containers)
+            {
+                var c = inv->GetInventoryContainer(t);
+                if (c == null || !c->IsLoaded || c->Size <= 0)
+                {
+                    continue;
+                }
+
+                for (var i = 0; i < c->Size; i++)
+                {
+                    var it = c->GetInventorySlot(i);
+                    if (it != null && it->ItemId != 0)
+                    {
+                        type = t;
+                        slot = i;
+                        return true;
+                    }
+                }
+            }
+        }
+        catch
+        {
+        }
+
+        return false;
     }
 
     public static uint GetItemStackSize(uint itemId)
@@ -383,7 +454,6 @@ internal static unsafe class InventoryHelpers
                 }
                 catch
                 {
-                    // ignore
                 }
 
                 try
@@ -397,7 +467,6 @@ internal static unsafe class InventoryHelpers
                 }
                 catch
                 {
-                    // ignore
                 }
             }
 
@@ -472,14 +541,13 @@ internal static unsafe class InventoryHelpers
                         continue;
                     }
 
-                    // First mapping wins; grades are unique per item id.
                     map.TryAdd(id, (baseParam, (byte)g));
                 }
             }
         }
         catch
         {
-            // leave empty; callers fall back to ItemId-only ordering
+            // Leave empty; callers fall back to ItemId-only ordering.
         }
 
         return map;

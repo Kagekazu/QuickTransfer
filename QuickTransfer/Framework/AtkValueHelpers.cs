@@ -173,8 +173,8 @@ internal static unsafe class AtkValueHelpers
         }
         catch
         {
-            // ignore
         }
+
         return false;
     }
 

@@ -6,9 +6,9 @@ namespace QuickTransfer.Framework;
 
 public static partial class ModifierBindings
 {
-    private const int VkMiddleButton = 0x04;
-    private const int VkXButton1 = 0x05;
-    private const int VkXButton2 = 0x06;
+    internal const int VkMiddleButton = 0x04;
+    internal const int VkXButton1 = 0x05;
+    internal const int VkXButton2 = 0x06;
     private const byte MiddleButtonEventMask = 0x04;
 
     public static readonly VirtualKey[] AllowedModifiers =

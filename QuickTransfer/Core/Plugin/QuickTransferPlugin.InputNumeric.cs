@@ -225,7 +225,6 @@ public sealed unsafe partial class QuickTransferPlugin
         }
         catch
         {
-            // ignore
             return false;
         }
     }
@@ -284,7 +283,6 @@ public sealed unsafe partial class QuickTransferPlugin
         }
         catch
         {
-            // ignore
         }
     }
 }
