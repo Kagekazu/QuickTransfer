@@ -59,8 +59,7 @@ internal static unsafe class InventoryHelpers
 
     private static readonly Dictionary<uint, uint> StackSizeCache = [];
     private static readonly Dictionary<uint, ChestSortParts> ItemSortPartsCache = [];
-    private static Dictionary<uint, (uint BaseParam, byte Grade)>? MateriaSortLookup;
-    private static readonly object MateriaLookupGate = new();
+    private static readonly Lazy<Dictionary<uint, (uint BaseParam, byte Grade)>> MateriaSortLookup = new(BuildMateriaSortLookup);
 
     private readonly record struct ChestSortParts(ushort Major, ushort Minor, uint MateriaBaseParam, byte MateriaGrade);
 
@@ -205,33 +204,18 @@ internal static unsafe class InventoryHelpers
         return false;
     }
 
-    public static bool IsAddonVisibleAnyIndex(string addonName, int maxIndex = 6)
-    {
-        for (var i = 1; i <= maxIndex; i++)
-        {
-            var addon = GetAddonByName(addonName, i);
-            if (addon != null && addon->IsVisible)
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
     public static bool IsSaddlebagOpen()
-        => IsAddonVisibleAnyIndex(QuickTransferConstants.SaddlebagAddonName) ||
-           IsAddonVisibleAnyIndex(QuickTransferConstants.Saddlebag2AddonName) ||
-           IsAddonVisibleAnyIndex(QuickTransferConstants.AetherBagsSaddleBagAddonName);
+        => IsAnyAddonVisible(QuickTransferConstants.SaddlebagAddonName, QuickTransferConstants.Saddlebag2AddonName, QuickTransferConstants.AetherBagsSaddleBagAddonName);
 
     public static bool IsRetainerSellListOpen()
-        => IsAddonVisibleAnyIndex(QuickTransferConstants.RetainerSellListAddonName);
+        => IsAnyAddonVisible(QuickTransferConstants.RetainerSellListAddonName);
 
     public static bool IsRetainerOpen()
-        => IsAddonVisibleAnyIndex(QuickTransferConstants.RetainerGrid0AddonName) ||
-           IsRetainerSellListOpen() ||
-           IsAddonVisibleAnyIndex(QuickTransferConstants.RetainerGridAddonName) ||
-           IsAddonVisibleAnyIndex(QuickTransferConstants.AetherBagsRetainerAddonName) ||
+        => IsAnyAddonVisible(
+               QuickTransferConstants.RetainerGrid0AddonName,
+               QuickTransferConstants.RetainerSellListAddonName,
+               QuickTransferConstants.RetainerGridAddonName,
+               QuickTransferConstants.AetherBagsRetainerAddonName) ||
            IsRetainerAgentActive();
 
     private static bool IsRetainerAgentActive()
@@ -247,37 +231,41 @@ internal static unsafe class InventoryHelpers
         }
     }
 
-    public static bool IsRetainerMarketListingSourceType(InventoryType inventoryType)
-        => IsPlayerInventoryType(inventoryType) ||
-           IsArmouryType(inventoryType) ||
-           IsPlayerCrystalsType(inventoryType) ||
-           IsSaddlebagType(inventoryType) ||
-           IsRetainerType(inventoryType);
-
+    // While the retainer market list is open, right-clicks on owned items are for listing, not transferring.
     public static bool ShouldYieldQuickTransferForRetainerMarket(
         Configuration configuration,
         ContextMenuHandler.ModifierMode mode,
         InventoryType inventoryType)
-    {
-        if (!configuration.YieldQuickTransferOnRetainerSellList ||
-            !configuration.EnableShiftQuickTransfer ||
-            mode != ContextMenuHandler.ModifierMode.Shift ||
-            !IsRetainerSellListOpen())
-        {
-            return false;
-        }
-
-        return IsRetainerMarketListingSourceType(inventoryType);
-    }
+        => configuration is { YieldQuickTransferOnRetainerSellList: true, EnableShiftQuickTransfer: true } &&
+           mode == ContextMenuHandler.ModifierMode.Shift &&
+           IsRetainerSellListOpen() &&
+           (IsPlayerInventoryType(inventoryType) ||
+            IsArmouryType(inventoryType) ||
+            IsPlayerCrystalsType(inventoryType) ||
+            IsSaddlebagType(inventoryType) ||
+            IsRetainerType(inventoryType));
 
     public static bool IsCompanyChestOpen()
-        => IsAddonVisibleAnyIndex(QuickTransferConstants.FreeCompanyChestAddonName);
+        => IsAnyAddonVisible(QuickTransferConstants.FreeCompanyChestAddonName);
 
     public static bool IsTradeOpen()
-        => IsAddonVisibleAnyIndex("Trade") || IsAddonVisibleAnyIndex("TradeWindow");
+        => IsAnyAddonVisible("Trade", "TradeWindow");
 
     public static bool IsVendorOpen()
-        => IsAddonVisibleAnyIndex("Shop");
+        => IsAnyAddonVisible("Shop");
+
+    private static bool IsAnyAddonVisible(params ReadOnlySpan<string> addonNames)
+    {
+        foreach (var name in addonNames)
+        {
+            if (TryGetVisibleAddon(name, out var _))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
 
     public static bool TryGetItemInfo(
         InventoryType type,
@@ -308,21 +296,23 @@ internal static unsafe class InventoryHelpers
         return itemId != 0;
     }
 
-    public static bool IsContainerLoaded(InventoryManager* inv, InventoryType type)
+    // Returns null when the container is missing or not loaded yet.
+    public static InventoryContainer* GetLoadedContainer(InventoryType type)
     {
         try
         {
+            var inv = InventoryManager.Instance();
             if (inv == null)
             {
-                return false;
+                return null;
             }
 
             var c = inv->GetInventoryContainer(type);
-            return c != null && c->IsLoaded && c->Size > 0;
+            return c != null && c->IsLoaded && c->Size > 0 ? c : null;
         }
         catch
         {
-            return false;
+            return null;
         }
     }
 
@@ -336,16 +326,10 @@ internal static unsafe class InventoryHelpers
 
         try
         {
-            var inv = InventoryManager.Instance();
-            if (inv == null)
-            {
-                return false;
-            }
-
             foreach (var t in containers)
             {
-                var c = inv->GetInventoryContainer(t);
-                if (c == null || !c->IsLoaded || c->Size <= 0)
+                var c = GetLoadedContainer(t);
+                if (c == null)
                 {
                     continue;
                 }
@@ -391,12 +375,12 @@ internal static unsafe class InventoryHelpers
                 return 999;
             }
 
-            var s = row.StackSize;
-            var result = s <= 0 ? 1U : s;
+            var result = row.StackSize <= 0 ? 1U : row.StackSize;
             lock (StackSizeCache)
             {
                 StackSizeCache[itemId] = result;
             }
+
             return result;
         }
         catch
@@ -405,16 +389,11 @@ internal static unsafe class InventoryHelpers
         }
     }
 
+    // Approximates the in-game ordering: UI category order, then materia stat and grade, then item id and HQ.
     public static ChestSortKey GetChestSortKey(uint itemId, bool isHq)
     {
         var parts = GetItemSortParts(itemId);
-        return new ChestSortKey(
-            parts.Major,
-            parts.Minor,
-            parts.MateriaBaseParam,
-            parts.MateriaGrade,
-            itemId,
-            isHq);
+        return new(parts.Major, parts.Minor, parts.MateriaBaseParam, parts.MateriaGrade, itemId, isHq);
     }
 
     private static ChestSortParts GetItemSortParts(uint itemId)
@@ -436,41 +415,25 @@ internal static unsafe class InventoryHelpers
 
             ushort major = 0;
             ushort minor = 0;
-            uint materiaBaseParam = 0;
-            byte materiaGrade = 0;
+            (uint BaseParam, byte Grade) materia = default;
 
             if (GenericHelpers.TryGetRow(itemId, out Item row) && row.RowId != 0)
             {
-                try
+                var catId = row.ItemUICategory.RowId;
+                if (catId != 0 && GenericHelpers.TryGetRow(catId, out ItemUICategory uiCat) && uiCat.RowId != 0)
                 {
-                    var catId = row.ItemUICategory.RowId;
-                    if (catId != 0 &&
-                        GenericHelpers.TryGetRow(catId, out ItemUICategory uiCat) &&
-                        uiCat.RowId != 0)
-                    {
-                        major = uiCat.OrderMajor;
-                        minor = uiCat.OrderMinor;
-                    }
-                }
-                catch
-                {
+                    major = uiCat.OrderMajor;
+                    minor = uiCat.OrderMinor;
                 }
 
-                try
+                // FilterGroup 13 is materia.
+                if (row.FilterGroup == 13)
                 {
-                    if (row.FilterGroup == 13 &&
-                        TryGetMateriaSortParts(itemId, out var baseParam, out var grade))
-                    {
-                        materiaBaseParam = baseParam;
-                        materiaGrade = grade;
-                    }
-                }
-                catch
-                {
+                    MateriaSortLookup.Value.TryGetValue(itemId, out materia);
                 }
             }
 
-            var result = new ChestSortParts(major, minor, materiaBaseParam, materiaGrade);
+            var result = new ChestSortParts(major, minor, materia.BaseParam, materia.Grade);
             lock (ItemSortPartsCache)
             {
                 ItemSortPartsCache[itemId] = result;
@@ -484,47 +447,12 @@ internal static unsafe class InventoryHelpers
         }
     }
 
-    private static bool TryGetMateriaSortParts(uint itemId, out uint baseParam, out byte grade)
-    {
-        baseParam = 0;
-        grade = 0;
-
-        var lookup = MateriaSortLookup;
-        if (lookup == null)
-        {
-            lock (MateriaLookupGate)
-            {
-                lookup = MateriaSortLookup;
-                if (lookup == null)
-                {
-                    lookup = BuildMateriaSortLookup();
-                    MateriaSortLookup = lookup;
-                }
-            }
-        }
-
-        if (!lookup.TryGetValue(itemId, out var parts))
-        {
-            return false;
-        }
-
-        baseParam = parts.BaseParam;
-        grade = parts.Grade;
-        return true;
-    }
-
     private static Dictionary<uint, (uint BaseParam, byte Grade)> BuildMateriaSortLookup()
     {
-        var map = new Dictionary<uint, (uint BaseParam, byte Grade)>();
+        Dictionary<uint, (uint BaseParam, byte Grade)> map = [];
         try
         {
-            var sheet = Svc.Data.GetExcelSheet<Materia>();
-            if (sheet == null)
-            {
-                return map;
-            }
-
-            foreach (var row in sheet)
+            foreach (var row in Svc.Data.GetExcelSheet<Materia>())
             {
                 var baseParam = row.BaseParam.RowId;
                 if (baseParam == 0)
@@ -532,16 +460,13 @@ internal static unsafe class InventoryHelpers
                     continue;
                 }
 
-                var count = row.Item.Count;
-                for (var g = 0; g < count; g++)
+                for (var g = 0; g < row.Item.Count; g++)
                 {
                     var id = row.Item[g].RowId;
-                    if (id == 0)
+                    if (id != 0)
                     {
-                        continue;
+                        map.TryAdd(id, (baseParam, (byte)g));
                     }
-
-                    map.TryAdd(id, (baseParam, (byte)g));
                 }
             }
         }

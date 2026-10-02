@@ -250,15 +250,9 @@ public sealed unsafe partial class QuickTransferPlugin
             if (InventoryHelpers.TryGetVisibleAddon(FreeCompanyChestAddonName, out var fcc, WideAddonSearchMaxIndex))
             {
                 var page = default(InventoryType?);
-                var lp = lastHoverCompanyChestPage;
-                var sp = lastSelectedCompanyChestPage;
-                if (lp != null && lp.Value.AddonId == fcc->Id && now - lp.Value.SeenAtMs <= HoverMaxAgeMs && InventoryHelpers.IsCompanyChestType(lp.Value.Page))
+                if (TryGetRecentCompanyChestTab(fcc->Id, now, HoverMaxAgeMs, includeCrystals: false, out var recentPage, out var _))
                 {
-                    page = lp.Value.Page;
-                }
-                else if (sp != null && sp.Value.AddonId == fcc->Id && now - sp.Value.SeenAtMs <= HoverMaxAgeMs && InventoryHelpers.IsCompanyChestType(sp.Value.Page))
-                {
-                    page = sp.Value.Page;
+                    page = recentPage;
                 }
                 else if (GetCompanyChestInventoryTypes() is { Length: > 0 } pages)
                 {
@@ -394,25 +388,12 @@ public sealed unsafe partial class QuickTransferPlugin
             Svc.Log.Information("[QuickTransfer] (MMB) Company Chest payload tab probe failed; falling back to hover/selected tab.");
         }
 
-        var lp = lastHoverCompanyChestPage;
-        if (lp != null && lp.Value.AddonId == addonId && now - lp.Value.SeenAtMs <= CompanyChestTabMaxAgeMs && InventoryHelpers.IsCompanyChestType(lp.Value.Page))
+        if (TryGetRecentCompanyChestTab(addonId, now, CompanyChestTabMaxAgeMs, includeCrystals: false, out var recentPage, out var source))
         {
-            QueueMiddleClickSort(lp.Value.Page, 0, addonId, now);
+            QueueMiddleClickSort(recentPage, 0, addonId, now);
             if (Configuration.DebugMode)
             {
-                Svc.Log.Information($"[QuickTransfer] (MMB) Using last-hovered Company Chest tab: {lp.Value.Page} slot=0 addonId={addonId}");
-            }
-
-            return true;
-        }
-
-        var sp = lastSelectedCompanyChestPage;
-        if (sp != null && sp.Value.AddonId == addonId && now - sp.Value.SeenAtMs <= CompanyChestTabMaxAgeMs && InventoryHelpers.IsCompanyChestType(sp.Value.Page))
-        {
-            QueueMiddleClickSort(sp.Value.Page, 0, addonId, now);
-            if (Configuration.DebugMode)
-            {
-                Svc.Log.Information($"[QuickTransfer] (MMB) Using selected Company Chest tab: {sp.Value.Page} slot=0 addonId={addonId}");
+                Svc.Log.Information($"[QuickTransfer] (MMB) Using {source} Company Chest tab: {recentPage} slot=0 addonId={addonId}");
             }
 
             return true;

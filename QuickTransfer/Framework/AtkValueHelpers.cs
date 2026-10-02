@@ -8,6 +8,9 @@ namespace QuickTransfer.Framework;
 
 internal static unsafe class AtkValueHelpers
 {
+    public static bool IsString(AtkValueType type)
+        => type is AtkValueType.String or AtkValueType.ManagedString or AtkValueType.ConstString;
+
     public static string ReadAtkValueString(AtkValue v)
     {
         if ((byte*)v.String == null)
@@ -17,29 +20,17 @@ internal static unsafe class AtkValueHelpers
 
         try
         {
-            return Marshal.PtrToStringUTF8(new(v.String))?.TrimEnd('\0') ?? string.Empty;
+            return Marshal.PtrToStringUTF8(new(v.String)) ?? string.Empty;
         }
         catch
         {
-            return ReadUtf8(v.String);
-        }
-    }
-
-    private static string ReadUtf8(byte* ptr)
-    {
-        if (ptr == null)
-        {
             return string.Empty;
         }
-
-        var len = 0;
-        while (ptr[len] != 0)
-        {
-            len++;
-        }
-
-        return len <= 0 ? string.Empty : Encoding.UTF8.GetString(ptr, len);
     }
+
+    // Returns an empty string for non-string values.
+    public static string ReadStringOrEmpty(AtkValue* v)
+        => v != null && IsString(v->Type) ? ReadAtkValueString(*v) : string.Empty;
 
     public static void WriteUtf8InPlace(byte* dst, string value)
     {
@@ -54,6 +45,7 @@ internal static unsafe class AtkValueHelpers
         {
             dst[i] = bytes[i];
         }
+
         dst[max] = 0;
     }
 
@@ -69,20 +61,15 @@ internal static unsafe class AtkValueHelpers
         s->BufUsed = value.Length + 1;
     }
 
-    private static AtkValue* CreateAtkValueArray(params object[] values)
+    public static void GenerateCallback(AtkUnitBase* unitBase, params object[] values)
     {
         var atkValues = (AtkValue*)Marshal.AllocHGlobal(values.Length * sizeof(AtkValue));
-        if (atkValues == null)
-        {
-            return null;
-        }
-
+        var stringAllocs = new List<nint>();
         try
         {
             for (var i = 0; i < values.Length; i++)
             {
-                var v = values[i];
-                switch (v)
+                switch (values[i])
                 {
                     case uint u:
                         atkValues[i].Type = AtkValueType.UInt;
@@ -92,121 +79,65 @@ internal static unsafe class AtkValueHelpers
                         atkValues[i].Type = AtkValueType.Int;
                         atkValues[i].Int = n;
                         break;
-                    case float f:
-                        atkValues[i].Type = AtkValueType.Float;
-                        atkValues[i].Float = f;
-                        break;
                     case bool b:
                         atkValues[i].Type = AtkValueType.Bool;
                         atkValues[i].Byte = (byte)(b ? 1 : 0);
                         break;
                     case string s:
-                        {
-                            atkValues[i].Type = AtkValueType.String;
-                            var bytes = Encoding.UTF8.GetBytes(s);
-                            var alloc = Marshal.AllocHGlobal(bytes.Length + 1);
-                            Marshal.Copy(bytes, 0, alloc, bytes.Length);
-                            Marshal.WriteByte(alloc, bytes.Length, 0);
-                            atkValues[i].String = (byte*)alloc;
-                            break;
-                        }
+                        var str = Marshal.StringToCoTaskMemUTF8(s);
+                        stringAllocs.Add(str);
+                        atkValues[i].Type = AtkValueType.String;
+                        atkValues[i].String = (byte*)str;
+                        break;
                     default:
-                        throw new ArgumentException($"Unsupported AtkValue type {v.GetType()}");
+                        throw new ArgumentException($"Unsupported AtkValue type {values[i].GetType()}");
                 }
             }
-        }
-        catch
-        {
-            Marshal.FreeHGlobal(new(atkValues));
-            return null;
-        }
 
-        return atkValues;
-    }
-
-    public static void GenerateCallback(AtkUnitBase* unitBase, params object[] values)
-    {
-        var atkValues = CreateAtkValueArray(values);
-        if (atkValues == null)
-        {
-            return;
-        }
-
-        try
-        {
             unitBase->FireCallback((uint)values.Length, atkValues);
         }
         finally
         {
-            for (var i = 0; i < values.Length; i++)
+            foreach (var str in stringAllocs)
             {
-                if (atkValues[i].Type == AtkValueType.String)
-                {
-                    Marshal.FreeHGlobal(new(atkValues[i].String));
-                }
+                Marshal.FreeCoTaskMem(str);
             }
 
-            Marshal.FreeHGlobal(new(atkValues));
+            Marshal.FreeHGlobal((nint)atkValues);
         }
     }
 
     public static bool TryGetAtkValueInt(AtkValue* values, int count, int idx, out int value)
     {
         value = 0;
-        try
+        if (values == null || idx < 0 || idx >= count)
         {
-            if (values == null || idx < 0 || idx >= count)
-            {
-                return false;
-            }
-            var v = values + idx;
-            if (v->Type == AtkValueType.Int)
-            {
+            return false;
+        }
+
+        var v = values + idx;
+        switch (v->Type)
+        {
+            case AtkValueType.Int:
                 value = v->Int;
                 return true;
-            }
-            if (v->Type == AtkValueType.UInt)
-            {
+            case AtkValueType.UInt:
                 value = unchecked((int)v->UInt);
                 return true;
-            }
+            default:
+                return false;
         }
-        catch
-        {
-        }
-
-        return false;
     }
 
-    public static void MakeAddonInvisible(AtkUnitBase* addon)
+    // Hides an addon without closing it, so it can still be driven via callbacks.
+    public static void SetAddonAlpha(AtkUnitBase* addon, byte alpha)
     {
-        if (addon == null)
-        {
-            return;
-        }
-        var root = addon->RootNode;
-        if (root == null)
+        if (addon == null || addon->RootNode == null)
         {
             return;
         }
 
-        root->Color.A = 0;
-        root->Alpha_2 = 0;
-    }
-
-    public static void MakeAddonVisible(AtkUnitBase* addon)
-    {
-        if (addon == null)
-        {
-            return;
-        }
-        var root = addon->RootNode;
-        if (root == null)
-        {
-            return;
-        }
-
-        root->Color.A = 255;
-        root->Alpha_2 = 255;
+        addon->RootNode->Color.A = alpha;
+        addon->RootNode->Alpha_2 = alpha;
     }
 }
