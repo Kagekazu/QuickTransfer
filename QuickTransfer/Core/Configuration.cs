@@ -66,22 +66,18 @@ public sealed class Configuration : IPluginConfiguration
 
     public void Save()
     {
-        WriteToDisk();
+        pluginInterface!.SavePluginConfig(this);
         _pendingPersist = false;
     }
 
+    // Settings are written when the window closes or the plugin unloads, not on every change.
     public void OnSettingChanged() => _pendingPersist = true;
 
     public void PersistIfDirty()
     {
-        if (!_pendingPersist)
+        if (_pendingPersist)
         {
-            return;
+            Save();
         }
-
-        WriteToDisk();
-        _pendingPersist = false;
     }
-
-    private void WriteToDisk() => pluginInterface!.SavePluginConfig(this);
 }

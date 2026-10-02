@@ -117,14 +117,8 @@ internal static unsafe class DragDropHelpers
     {
         try
         {
-            var inv = InventoryManager.Instance();
-            if (inv == null)
-            {
-                return preferredSlot;
-            }
-
-            var c = inv->GetInventoryContainer(type);
-            if (c == null || !c->IsLoaded || c->Size <= 0)
+            var c = InventoryHelpers.GetLoadedContainer(type);
+            if (c == null)
             {
                 return preferredSlot;
             }
@@ -202,13 +196,12 @@ internal static unsafe class DragDropHelpers
             return null;
         }
 
-        return component->GetComponentType() == ComponentType.List
-            ? TryGetHoveredListDdi((AtkComponentList*)component)
-            : TryGetDdiFromComponent(component);
-    }
+        if (component->GetComponentType() != ComponentType.List)
+        {
+            return TryGetDdiFromComponent(component);
+        }
 
-    private static AtkDragDropInterface* TryGetHoveredListDdi(AtkComponentList* list)
-    {
+        var list = (AtkComponentList*)component;
         var hovered = TryGetDdiFromListIndex(list, list->HoveredItemIndex);
         if (hovered != null)
         {

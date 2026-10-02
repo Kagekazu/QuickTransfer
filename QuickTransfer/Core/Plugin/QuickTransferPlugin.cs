@@ -382,20 +382,7 @@ public sealed unsafe partial class QuickTransferPlugin(IDalamudPluginInterface p
                 Svc.Log.Information($"[QuickTransfer] ({mode} + RClick) Selected context action '{chosenText}' (idx={chosenIndex}) via OpenForItemSlot.");
             }
 
-            if (mode == ModifierMode.Shift &&
-                ContextMenuHandler.ContextLabelMatches(AutoContextAction.Trade, chosenText) &&
-                InventoryHelpers.IsTradeOpen())
-            {
-                ArmPendingNumeric(now, PendingNumericKind.Trade, 1500, suppressMs: 1500);
-            }
-
-            if (Configuration.AutoConfirmVendorSell &&
-                mode == ModifierMode.Shift &&
-                ContextMenuHandler.ContextLabelMatches(AutoContextAction.Sell, chosenText) &&
-                InventoryHelpers.IsVendorOpen())
-            {
-                ArmPendingNumeric(now, PendingNumericKind.Sell, 1500, suppressMs: 1500);
-            }
+            ArmTradeOrSellConfirm(now, mode.Value, chosenText, requireTradeWindow: true);
         }
         else if (Configuration.DebugMode && mode == ModifierMode.Ctrl)
         {
@@ -700,8 +687,7 @@ public sealed unsafe partial class QuickTransferPlugin(IDalamudPluginInterface p
 
         try
         {
-            var promptVal = inputNumeric->AtkValues + 6;
-            var prompt = promptVal->Type is AtkValueType.String or AtkValueType.ManagedString ? AtkValueHelpers.ReadAtkValueString(*promptVal) : string.Empty;
+            var prompt = AtkValueHelpers.ReadStringOrEmpty(inputNumeric->AtkValues + 6);
             var minVal = inputNumeric->AtkValues + 2;
             var maxVal = inputNumeric->AtkValues + 3;
             var min = minVal->Type == AtkValueType.UInt ? minVal->UInt : 0U;
@@ -953,23 +939,32 @@ public sealed unsafe partial class QuickTransferPlugin(IDalamudPluginInterface p
         ProcessDeferredSortMenuClick(now);
     }
 
-    private void ArmPendingNumericForDeferredSelection(long now, AgentInventoryContext* agent, ModifierMode mode, string chosenText)
+    private void ArmTradeOrSellConfirm(long now, ModifierMode mode, string chosenText, bool requireTradeWindow)
     {
-        var isSplit = mode == ModifierMode.Alt && ContextMenuHandler.ContextLabelMatches(AutoContextAction.Split, chosenText);
-        ArmSuppressContextMenu(now, isSplit ? 3000 : 1500);
+        if (mode != ModifierMode.Shift)
+        {
+            return;
+        }
 
-        if (mode == ModifierMode.Shift && ContextMenuHandler.ContextLabelMatches(AutoContextAction.Trade, chosenText))
+        if (ContextMenuHandler.ContextLabelMatches(AutoContextAction.Trade, chosenText) &&
+            (!requireTradeWindow || InventoryHelpers.IsTradeOpen()))
         {
             ArmPendingNumeric(now, PendingNumericKind.Trade, 1500, suppressMs: 1500);
         }
 
         if (Configuration.AutoConfirmVendorSell &&
-            mode == ModifierMode.Shift &&
             ContextMenuHandler.ContextLabelMatches(AutoContextAction.Sell, chosenText) &&
             InventoryHelpers.IsVendorOpen())
         {
             ArmPendingNumeric(now, PendingNumericKind.Sell, 1500, suppressMs: 1500);
         }
+    }
+
+    private void ArmPendingNumericForDeferredSelection(long now, AgentInventoryContext* agent, ModifierMode mode, string chosenText)
+    {
+        var isSplit = mode == ModifierMode.Alt && ContextMenuHandler.ContextLabelMatches(AutoContextAction.Split, chosenText);
+        ArmSuppressContextMenu(now, isSplit ? 3000 : 1500);
+        ArmTradeOrSellConfirm(now, mode, chosenText, requireTradeWindow: false);
 
         if (Configuration.EnableCompanyChest &&
             mode == ModifierMode.Shift &&
@@ -1029,15 +1024,7 @@ public sealed unsafe partial class QuickTransferPlugin(IDalamudPluginInterface p
                 return;
             }
 
-            var addon = (AtkUnitBase*)args.Addon.Address;
-            if (now <= suppressUntilMs)
-            {
-                AtkValueHelpers.MakeAddonInvisible(addon);
-            }
-            else
-            {
-                AtkValueHelpers.MakeAddonVisible(addon);
-            }
+            AtkValueHelpers.SetAddonAlpha((AtkUnitBase*)args.Addon.Address, now <= suppressUntilMs ? (byte)0 : (byte)255);
         }
         catch
         {

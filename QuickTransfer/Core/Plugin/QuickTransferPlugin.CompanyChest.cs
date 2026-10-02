@@ -277,26 +277,43 @@ public sealed unsafe partial class QuickTransferPlugin
                 return true;
             }
 
-            var lp = lastHoverCompanyChestPage;
-            if (lp != null && lp.Value.AddonId == addonId && now - lp.Value.SeenAtMs <= CompanyChestTabMaxAgeMs && InventoryHelpers.IsCompanyChestDestinationType(lp.Value.Page))
-            {
-                page = lp.Value.Page;
-                return true;
-            }
-
-            var sp = lastSelectedCompanyChestPage;
-            if (sp != null && sp.Value.AddonId == addonId && now - sp.Value.SeenAtMs <= CompanyChestTabMaxAgeMs && InventoryHelpers.IsCompanyChestDestinationType(sp.Value.Page))
-            {
-                page = sp.Value.Page;
-                return true;
-            }
-
-            return TryResolveCompanyChestSelectedPageFromAtkValues(addonId, out page);
+            return TryGetRecentCompanyChestTab(addonId, now, CompanyChestTabMaxAgeMs, includeCrystals: true, out page, out var _) ||
+                   TryResolveCompanyChestSelectedPageFromAtkValues(addonId, out page);
         }
         catch
         {
             return false;
         }
+    }
+
+    // Checks the last hovered tab, then the last clicked tab, for the given FC chest window.
+    private bool TryGetRecentCompanyChestTab(
+        uint addonId,
+        long now,
+        long maxAgeMs,
+        bool includeCrystals,
+        out InventoryType page,
+        out string source)
+    {
+        foreach (var (seen, name) in (((InventoryType Page, uint AddonId, long SeenAtMs)?, string)[])
+                 [(lastHoverCompanyChestPage, "last-hovered"), (lastSelectedCompanyChestPage, "selected")])
+        {
+            if (seen is not { } s || s.AddonId != addonId || now - s.SeenAtMs > maxAgeMs)
+            {
+                continue;
+            }
+
+            if (includeCrystals ? InventoryHelpers.IsCompanyChestDestinationType(s.Page) : InventoryHelpers.IsCompanyChestType(s.Page))
+            {
+                page = s.Page;
+                source = name;
+                return true;
+            }
+        }
+
+        page = default;
+        source = string.Empty;
+        return false;
     }
 
     private void OnCompanyChestButtonClick(AtkUnitBase* addon, int eventParam, long now)
@@ -743,7 +760,7 @@ public sealed unsafe partial class QuickTransferPlugin
 
             foreach (var p in pages)
             {
-                if (!InventoryHelpers.IsContainerLoaded(inv, p) || inv->GetInventorySlot(p, 0) == null)
+                if (InventoryHelpers.GetLoadedContainer(p) == null || inv->GetInventorySlot(p, 0) == null)
                 {
                     return false;
                 }
@@ -1059,14 +1076,8 @@ public sealed unsafe partial class QuickTransferPlugin
         }
 
         var page = pages[0];
-        var inv = InventoryManager.Instance();
-        if (inv == null)
-        {
-            return false;
-        }
-
-        var c = inv->GetInventoryContainer(page);
-        if (c == null || !c->IsLoaded || c->Size <= 1)
+        var c = InventoryHelpers.GetLoadedContainer(page);
+        if (c == null || c->Size <= 1)
         {
             return false;
         }
