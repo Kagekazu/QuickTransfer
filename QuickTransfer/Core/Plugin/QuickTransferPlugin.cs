@@ -20,7 +20,7 @@ namespace QuickTransfer;
 
 public sealed unsafe partial class QuickTransferPlugin(IDalamudPluginInterface pluginInterface) : IAsyncDalamudPlugin
 {
-    private const int CurrentConfigVersion = 5;
+    private const int CurrentConfigVersion = 6;
     private const long DeferredRequestTimeoutMs = 1500;
 
     private readonly Dictionary<int, Dictionary<int, InventoryType>> companyChestSelectedTabCandidates = [];
@@ -221,6 +221,12 @@ public sealed unsafe partial class QuickTransferPlugin(IDalamudPluginInterface p
         if (Configuration.Version < 3)
         {
             Configuration.DebugMode = false;
+        }
+
+        // Mouse 5 was too easy to enable accidentally and steals Back/Forward; reset on upgrade.
+        if (Configuration.Version < 6)
+        {
+            Configuration.MiddleClickUseXButton2 = false;
         }
 
         Configuration.Version = CurrentConfigVersion;

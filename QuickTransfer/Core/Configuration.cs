@@ -37,7 +37,7 @@ public sealed class Configuration : IPluginConfiguration
     public bool MiddleClickUseXButton2 { get; set; } = false;
     public bool YieldQuickTransferOnRetainerSellList { get; set; } = true;
 
-    public int Version { get; set; } = 5;
+    public int Version { get; set; } = 6;
 
     public void ResetKeybindingsToDefaults()
     {
