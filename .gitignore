@@ -4,8 +4,9 @@
 *.userosscache
 *.sln.docstates
 
-# Cursor local agent context
+# Local AI / agent context (keep off GitHub)
 .cursor/
+.claude/
 
 # Build results
 [Dd]ebug/
