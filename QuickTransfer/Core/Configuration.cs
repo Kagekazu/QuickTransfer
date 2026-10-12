@@ -33,8 +33,8 @@ public sealed class Configuration : IPluginConfiguration
     public VirtualKey AltActionModifier { get; set; } = VirtualKey.MENU;
     public int ModifierLatchMs { get; set; } = 180;
     public bool MiddleClickUseMButton { get; set; } = true;
-    public bool MiddleClickUseXButton1 { get; set; } = true;
-    public bool MiddleClickUseXButton2 { get; set; } = true;
+    public bool MiddleClickUseXButton1 { get; set; } = false;
+    public bool MiddleClickUseXButton2 { get; set; } = false;
     public bool YieldQuickTransferOnRetainerSellList { get; set; } = true;
 
     public int Version { get; set; } = 5;
@@ -49,8 +49,8 @@ public sealed class Configuration : IPluginConfiguration
         AltActionModifier = VirtualKey.MENU;
         ModifierLatchMs = 180;
         MiddleClickUseMButton = true;
-        MiddleClickUseXButton1 = true;
-        MiddleClickUseXButton2 = true;
+        MiddleClickUseXButton1 = false;
+        MiddleClickUseXButton2 = false;
         EnableMiddleClickSort = true;
     }
 

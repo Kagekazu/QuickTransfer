@@ -140,7 +140,7 @@ public class PluginUI : Window
 
                 ImGui.Spacing();
                 ImGui.Text("Middle-click buttons");
-                Hint("Choose which mouse buttons trigger sort / FC chest organize. Disable all to turn off middle-click entirely.");
+                Hint("Choose which mouse buttons trigger sort / FC chest organize. Side buttons are off by default so they don't steal Back / Forward. Disable all to turn off middle-click entirely.");
 
                 var mmb = config.MiddleClickUseMButton;
                 if (ImGui.Checkbox("Middle mouse button", ref mmb))
