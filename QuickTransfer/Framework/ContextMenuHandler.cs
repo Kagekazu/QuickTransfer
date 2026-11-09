@@ -1,10 +1,13 @@
+using Dalamud.Game;
 using FFXIVClientStructs.FFXIV.Client.UI.Agent;
 using FFXIVClientStructs.FFXIV.Component.GUI;
+using System.Text.RegularExpressions;
+using Addon = Lumina.Excel.Sheets.Addon;
 using AtkValueType = FFXIVClientStructs.FFXIV.Component.GUI.AtkValueType;
 
 namespace QuickTransfer.Framework;
 
-internal static unsafe class ContextMenuHandler
+internal static unsafe partial class ContextMenuHandler
 {
     public enum AutoContextAction
     {
@@ -43,8 +46,109 @@ internal static unsafe class ContextMenuHandler
         AutoContextAction.Sell
     ];
 
+    private const string UndoSortLabel = "Undo Sort";
+
+    private static readonly (AutoContextAction Action, string Label)[] EnglishLabels =
+    [
+        (AutoContextAction.AddAllToSaddlebag, "Add All to Saddlebag"),
+        (AutoContextAction.RemoveAllFromSaddlebag, "Remove All from Saddlebag"),
+        (AutoContextAction.RemoveAllFromSaddlebag, "Remove All"),
+        (AutoContextAction.PlaceInArmouryChest, "Place in Armoury Chest"),
+        (AutoContextAction.ReturnToInventory, "Return to Inventory"),
+        (AutoContextAction.EntrustToRetainer, "Entrust to Retainer"),
+        (AutoContextAction.RetrieveFromRetainer, "Retrieve from Retainer"),
+        (AutoContextAction.RemoveFromCompanyChest, "Remove"),
+        (AutoContextAction.Split, "Split"),
+        (AutoContextAction.Sort, "Sort"),
+        (AutoContextAction.Trade, "Trade"),
+        (AutoContextAction.Sell, "Sell")
+    ];
+
+    private static Dictionary<AutoContextAction, HashSet<string>> knownLabels = BuildLabelSets([]);
+    private static readonly HashSet<string> undoSortLabels = new([UndoSortLabel], StringComparer.OrdinalIgnoreCase);
+
+    // Menu rows show the client-language text of Addon sheet rows, so each English label is mapped
+    // to the rows with that English text and their local text is accepted too.
+    public static void LoadLocalizedLabels()
+    {
+        if (Svc.Data.Language == ClientLanguage.English)
+        {
+            return;
+        }
+
+        try
+        {
+            HashSet<string> wanted = new(EnglishLabels.Select(l => l.Label).Append(UndoSortLabel), StringComparer.OrdinalIgnoreCase);
+            Dictionary<string, List<uint>> rowsByEnglish = [with(StringComparer.OrdinalIgnoreCase)];
+            foreach (var row in Svc.Data.GetExcelSheet<Addon>(ClientLanguage.English))
+            {
+                var text = NormalizeLabel(row.Text.ExtractText());
+                if (wanted.Contains(text))
+                {
+                    if (!rowsByEnglish.TryGetValue(text, out var ids))
+                    {
+                        rowsByEnglish[text] = ids = [];
+                    }
+
+                    ids.Add(row.RowId);
+                }
+            }
+
+            var localSheet = Svc.Data.GetExcelSheet<Addon>();
+            IEnumerable<string> Localize(string english)
+                => rowsByEnglish.TryGetValue(english, out var ids)
+                    ? ids.Select(id => localSheet.TryGetRow(id, out var r) ? NormalizeLabel(r.Text.ExtractText()) : string.Empty).Where(s => s.Length > 0)
+                    : [];
+
+            knownLabels = BuildLabelSets(EnglishLabels.SelectMany(l => Localize(l.Label).Select(local => (l.Action, local))));
+            undoSortLabels.UnionWith(Localize(UndoSortLabel));
+
+            Svc.Log.Information(
+                $"[QuickTransfer] Context menu labels for {Svc.Data.Language}: " +
+                string.Join("; ", knownLabels.Select(kv => $"{kv.Key}=[{string.Join(", ", kv.Value)}]")) +
+                $"; UndoSort=[{string.Join(", ", undoSortLabels)}]");
+        }
+        catch (Exception ex)
+        {
+            Svc.Log.Warning(ex, "[QuickTransfer] Failed to load localized context menu labels; only English labels will match.");
+        }
+    }
+
+    public static bool IsKnownLabel(AutoContextAction action, string menuText)
+        => knownLabels.TryGetValue(action, out var labels) && labels.Contains(NormalizeLabel(menuText));
+
+    public static bool IsUndoSortLabel(string menuText) => undoSortLabels.Contains(NormalizeLabel(menuText));
+
+    private static Dictionary<AutoContextAction, HashSet<string>> BuildLabelSets(IEnumerable<(AutoContextAction Action, string Label)> extra)
+    {
+        Dictionary<AutoContextAction, HashSet<string>> sets = [];
+        foreach (var (action, label) in EnglishLabels.Concat(extra))
+        {
+            if (!sets.TryGetValue(action, out var set))
+            {
+                sets[action] = set = [with(StringComparer.OrdinalIgnoreCase)];
+            }
+
+            set.Add(label);
+        }
+
+        return sets;
+    }
+
+    // Raw menu strings can still carry SeString payloads (e.g. soft hyphens in German labels).
+    private static string NormalizeLabel(string text)
+        => SeStringPayload().Replace(text, string.Empty).Trim();
+
+    [GeneratedRegex(@"\u0002[\s\S]*?\u0003|\u00AD|\0")]
+    private static partial Regex SeStringPayload();
+
     public static bool ContextLabelMatches(AutoContextAction desiredAction, string menuText)
     {
+        if (IsKnownLabel(desiredAction, menuText))
+        {
+            return true;
+        }
+
         var t = menuText.Trim();
         static bool Has(string s, string needle) => s.Contains(needle, StringComparison.OrdinalIgnoreCase);
 
@@ -297,7 +401,7 @@ internal static unsafe class ContextMenuHandler
         var hasUndoSort = false;
         foreach (var (index, text) in ReadMenuItems(agent, 64))
         {
-            if (text.Trim().Equals("Undo Sort", StringComparison.OrdinalIgnoreCase))
+            if (IsUndoSortLabel(text))
             {
                 hasUndoSort = true;
             }

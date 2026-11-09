@@ -1,9 +1,11 @@
+using Dalamud.Game;
 using Dalamud.Game.Chat;
 using FFXIVClientStructs.FFXIV.Client.Game;
 using FFXIVClientStructs.FFXIV.Client.UI;
 using FFXIVClientStructs.FFXIV.Component.GUI;
 using System.Runtime.InteropServices;
 using AtkValueType = FFXIVClientStructs.FFXIV.Component.GUI.AtkValueType;
+using LogMessageSheet = Lumina.Excel.Sheets.LogMessage;
 
 namespace QuickTransfer;
 
@@ -12,6 +14,15 @@ public sealed unsafe partial class QuickTransferPlugin
     private const int CompanyChestSlotCap = 80;
     private const int CompanyChestCrystalSlotCap = 64;
     private const long CompanyChestTabMaxAgeMs = 180_000;
+
+    private static readonly string[] CompanyChestBusyPhrases =
+    [
+        "Another player is using the chest",
+        "Unable to store item",
+        "Unable to complete company chest action"
+    ];
+
+    private readonly HashSet<uint> companyChestBusyLogMessageIds = [];
 
     private readonly record struct OrganizeTimings(
         int StepDelayMs,
@@ -213,10 +224,7 @@ public sealed unsafe partial class QuickTransferPlugin
             if (bestIdx >= 0 && bestDistinct >= 2 && companyChestSelectedTabAtkValueIndex != bestIdx)
             {
                 companyChestSelectedTabAtkValueIndex = bestIdx;
-                if (Configuration.DebugMode)
-                {
-                    Svc.Log.Information($"[QuickTransfer] FC Chest AtkValues selected-tab index inferred: idx={bestIdx} (mappedPages={bestDistinct}).");
-                }
+                DebugLog($"FC Chest AtkValues selected-tab index inferred: idx={bestIdx} (mappedPages={bestDistinct}).");
             }
         }
         catch
@@ -352,10 +360,7 @@ public sealed unsafe partial class QuickTransferPlugin
                 companyChestOrganize.Active = false;
                 companyChestOrganize.WaitingForApply = false;
                 companyChestOrganize.WaitObservedChangeAtMs = 0;
-                if (Configuration.DebugMode)
-                {
-                    Svc.Log.Information($"[QuickTransfer] (MMB) Company Chest tab changed to {selectedPage}; stopping previous organize run.");
-                }
+                DebugLog($"(MMB) Company Chest tab changed to {selectedPage}; stopping previous organize run.");
             }
 
             if (companyChestDeposit.Active &&
@@ -363,10 +368,7 @@ public sealed unsafe partial class QuickTransferPlugin
                 companyChestDeposit.DestPage != selectedPage)
             {
                 companyChestDeposit.Active = false;
-                if (Configuration.DebugMode)
-                {
-                    Svc.Log.Information($"[QuickTransfer] (Shift+RClick) Company Chest tab changed to {selectedPage}; stopping deposit run.");
-                }
+                DebugLog($"(Shift+RClick) Company Chest tab changed to {selectedPage}; stopping deposit run.");
             }
         }
         catch
@@ -389,23 +391,70 @@ public sealed unsafe partial class QuickTransferPlugin
                 return;
             }
 
-            if (!text.Contains("Another player is using the chest", StringComparison.OrdinalIgnoreCase) &&
-                !text.Contains("Unable to store item", StringComparison.OrdinalIgnoreCase) &&
-                !text.Contains("Unable to complete company chest action", StringComparison.OrdinalIgnoreCase))
+            if (CompanyChestBusyPhrases.Any(p => text.Contains(p, StringComparison.OrdinalIgnoreCase)))
             {
-                return;
+                OnCompanyChestBusyMessage(text);
+            }
+        }
+        catch
+        {
+        }
+    }
+
+    // Chat text is localized, so non-English clients match the busy messages by LogMessage row instead.
+    private void LoadCompanyChestBusyLogMessageIds()
+    {
+        if (Svc.Data.Language == ClientLanguage.English)
+        {
+            return;
+        }
+
+        try
+        {
+            foreach (var row in Svc.Data.GetExcelSheet<LogMessageSheet>(ClientLanguage.English))
+            {
+                var text = row.Text.ExtractText();
+                if (CompanyChestBusyPhrases.Any(p => text.Contains(p, StringComparison.OrdinalIgnoreCase)))
+                {
+                    companyChestBusyLogMessageIds.Add(row.RowId);
+                }
             }
 
+            Svc.Log.Information($"[QuickTransfer] FC Chest busy messages for {Svc.Data.Language}: LogMessage rows [{string.Join(", ", companyChestBusyLogMessageIds)}]");
+        }
+        catch (Exception ex)
+        {
+            Svc.Log.Warning(ex, "[QuickTransfer] Failed to load FC Chest busy LogMessage rows.");
+        }
+    }
+
+    private void OnLogMessage(ILogMessage message)
+    {
+        try
+        {
+            if (Configuration.EnableCompanyChest &&
+                (companyChestOrganize.Active || companyChestDeposit.Active) &&
+                companyChestBusyLogMessageIds.Contains(message.LogMessageId))
+            {
+                OnCompanyChestBusyMessage($"LogMessage {message.LogMessageId}");
+            }
+        }
+        catch
+        {
+        }
+    }
+
+    private void OnCompanyChestBusyMessage(string text)
+    {
+        try
+        {
             var now = Environment.TickCount64;
             var backoffMs = RegisterCompanyChestBusyHit(now);
 
             if (companyChestOrganize.Active && companyChestBusyHits >= 3)
             {
                 companyChestOrganize.Active = false;
-                if (Configuration.DebugMode)
-                {
-                    Svc.Log.Information($"[QuickTransfer] (MMB) FC Chest busy hit {companyChestBusyHits}; stopping organize run. msg='{text}'");
-                }
+                DebugLog($"(MMB) FC Chest busy hit {companyChestBusyHits}; stopping organize run. msg='{text}'");
             }
             else if (companyChestOrganize.Active)
             {
@@ -420,10 +469,7 @@ public sealed unsafe partial class QuickTransferPlugin
             companyChestDeposit.Active = false;
             ClearPendingNumeric();
 
-            if (Configuration.DebugMode)
-            {
-                Svc.Log.Information($"[QuickTransfer] (MMB) FC Chest busy detected from chat; backoff={backoffMs}ms (hit {companyChestBusyHits}). msg='{text}'");
-            }
+            DebugLog($"(MMB) FC Chest busy detected from chat; backoff={backoffMs}ms (hit {companyChestBusyHits}). msg='{text}'");
         }
         catch
         {
@@ -446,10 +492,7 @@ public sealed unsafe partial class QuickTransferPlugin
             var now = Environment.TickCount64;
             if (!TryResolveCompanyChestActivePage(now, out var destPage))
             {
-                if (Configuration.DebugMode)
-                {
-                    Svc.Log.Information("[QuickTransfer] (Shift+RClick) Company Chest deposit skipped: could not determine active tab.");
-                }
+                DebugLog("(Shift+RClick) Company Chest deposit skipped: could not determine active tab.");
 
                 return false;
             }
@@ -573,10 +616,7 @@ public sealed unsafe partial class QuickTransferPlugin
             ArmPendingNumeric(now, PendingNumericKind.Store, 1500);
         }
 
-        if (Configuration.DebugMode)
-        {
-            Svc.Log.Information($"[QuickTransfer] (Shift+RClick) Company Chest deposit step {companyChestDeposit.Steps}: {companyChestDeposit.SourceType} slot={companyChestDeposit.SourceSlot} -> {destType} slot={destSlot} (page={page}, qty={qty}, stackMax={maxStack}).");
-        }
+        DebugLog($"(Shift+RClick) Company Chest deposit step {companyChestDeposit.Steps}: {companyChestDeposit.SourceType} slot={companyChestDeposit.SourceSlot} -> {destType} slot={destSlot} (page={page}, qty={qty}, stackMax={maxStack}).");
     }
 
     private void StartCompanyChestOrganize(long now, InventoryType selectedPage)
@@ -600,10 +640,7 @@ public sealed unsafe partial class QuickTransferPlugin
             {
                 // Same tab: keep progress, just extend the deadline.
                 companyChestOrganize.ExpiresAtMs = Math.Max(companyChestOrganize.ExpiresAtMs, now + 20000);
-                if (Configuration.DebugMode)
-                {
-                    Svc.Log.Information("[QuickTransfer] (MMB) Company Chest organize already running; ignoring restart.");
-                }
+                DebugLog("(MMB) Company Chest organize already running; ignoring restart.");
 
                 return;
             }
@@ -627,10 +664,7 @@ public sealed unsafe partial class QuickTransferPlugin
             Pages = [selectedPage]
         };
 
-        if (Configuration.DebugMode)
-        {
-            Svc.Log.Information($"[QuickTransfer] (MMB) Company Chest organize started (selectedPage={selectedPage}).");
-        }
+        DebugLog($"(MMB) Company Chest organize started (selectedPage={selectedPage}).");
     }
 
     // Slows down automatically once the server starts rejecting actions.
@@ -739,10 +773,7 @@ public sealed unsafe partial class QuickTransferPlugin
             return;
         }
 
-        if (Configuration.DebugMode)
-        {
-            Svc.Log.Information($"[QuickTransfer] (MMB) Company Chest organize done; no moves found. pages=[{string.Join(", ", pages)}]");
-        }
+        DebugLog($"(MMB) Company Chest organize done; no moves found. pages=[{string.Join(", ", pages)}]");
 
         companyChestOrganize.Active = false;
     }
@@ -819,10 +850,7 @@ public sealed unsafe partial class QuickTransferPlugin
                 o.WaitingForApply = false;
                 o.WaitObservedChangeAtMs = 0;
 
-                if (Configuration.DebugMode)
-                {
-                    Svc.Log.Information($"[QuickTransfer] (MMB) Company Chest move rolled back; treating as busy. backoff={backoffMs}ms (hit {companyChestBusyHits}).");
-                }
+                DebugLog($"(MMB) Company Chest move rolled back; treating as busy. backoff={backoffMs}ms (hit {companyChestBusyHits}).");
 
                 if (companyChestBusyHits >= 3)
                 {
@@ -907,10 +935,7 @@ public sealed unsafe partial class QuickTransferPlugin
             ArmPendingNumeric(now, PendingNumericKind.Move, 1500, suppressMs: 1500);
         }
 
-        if (Configuration.DebugMode)
-        {
-            Svc.Log.Information($"[QuickTransfer] (MMB) Company Chest organize step {o.Steps}: {srcType} slot={srcSlot} -> {dstType} slot={dstSlot} (phase={phaseName}, numeric={needsNumeric}).");
-        }
+        DebugLog($"(MMB) Company Chest organize step {o.Steps}: {srcType} slot={srcSlot} -> {dstType} slot={dstSlot} (phase={phaseName}, numeric={needsNumeric}).");
     }
 
     // Finds a non-full stack and a later stack of the same item (and HQ flag) to merge into it.
@@ -1409,12 +1434,9 @@ public sealed unsafe partial class QuickTransferPlugin
                         continue;
                     }
 
-                    if (Configuration.DebugMode)
-                    {
-                        Svc.Log.Information($"[QuickTransfer] ContextMenu listId={listId} row={i} label='{label}'");
-                    }
+                    DebugLog($"ContextMenu listId={listId} row={i} label='{label}'");
 
-                    if (!label.Equals("Remove", StringComparison.OrdinalIgnoreCase))
+                    if (!ContextMenuHandler.IsKnownLabel(ContextMenuHandler.AutoContextAction.RemoveFromCompanyChest, label))
                     {
                         continue;
                     }
@@ -1424,10 +1446,7 @@ public sealed unsafe partial class QuickTransferPlugin
                     // Closing immediately can cancel the action.
                     pendingCloseContextMenuAtMs = Environment.TickCount64 + 50;
 
-                    if (Configuration.DebugMode)
-                    {
-                        Svc.Log.Information($"[QuickTransfer] Triggered Company Chest 'Remove' (listId={listId}, row={i}).");
-                    }
+                    DebugLog($"Triggered Company Chest 'Remove' (listId={listId}, row={i}).");
 
                     return true;
                 }

@@ -274,10 +274,7 @@ public sealed unsafe partial class QuickTransferPlugin
             var openSlot = DragDropHelpers.PickContextMenuSlot(chosenType, chosenSlot);
             QueueMiddleClickSort(chosenType, openSlot, chosenAddonId, now);
 
-            if (Configuration.DebugMode)
-            {
-                Svc.Log.Information($"[QuickTransfer] (MMB) No hover DDI; bootstrapped from visible window: {chosenType} slot={openSlot} addonId={chosenAddonId}");
-            }
+            DebugLog($"(MMB) No hover DDI; bootstrapped from visible window: {chosenType} slot={openSlot} addonId={chosenAddonId}");
 
             return true;
         }
@@ -337,10 +334,7 @@ public sealed unsafe partial class QuickTransferPlugin
             {
                 var openSlot = DragDropHelpers.PickContextMenuSlot(good.Type, good.Slot);
                 QueueMiddleClickSort(good.Type, openSlot, addonId, now);
-                if (Configuration.DebugMode)
-                {
-                    Svc.Log.Information($"[QuickTransfer] (MMB) Using last-good target for hovered addon '{addonName}': {good.Type} slot={openSlot} addonId={addonId}");
-                }
+                DebugLog($"(MMB) Using last-good target for hovered addon '{addonName}': {good.Type} slot={openSlot} addonId={addonId}");
 
                 return true;
             }
@@ -352,10 +346,7 @@ public sealed unsafe partial class QuickTransferPlugin
 
             var bootstrapSlot = DragDropHelpers.PickContextMenuSlot(type, slot);
             QueueMiddleClickSort(type, bootstrapSlot, addonId, now);
-            if (Configuration.DebugMode)
-            {
-                Svc.Log.Information($"[QuickTransfer] (MMB) Bootstrapped from hovered addon '{addonName}': {type} slot={bootstrapSlot} addonId={addonId}");
-            }
+            DebugLog($"(MMB) Bootstrapped from hovered addon '{addonName}': {type} slot={bootstrapSlot} addonId={addonId}");
 
             return true;
         }
@@ -372,50 +363,33 @@ public sealed unsafe partial class QuickTransferPlugin
         var fccMatches = InventoryHelpers.TryGetVisibleAddon(FreeCompanyChestAddonName, out var fcc, WideAddonSearchMaxIndex) && fcc->Id == addonId;
 
         // Reading the displayed page from the addon avoids relying on tab click params, which vary by client.
-        if (fccMatches && TryResolveCompanyChestPageFromAddon(fcc, out var curPage) && InventoryHelpers.IsCompanyChestType(curPage))
+        string source;
+        if (fccMatches && TryResolveCompanyChestPageFromAddon(fcc, out var page) && InventoryHelpers.IsCompanyChestType(page))
         {
-            QueueMiddleClickSort(curPage, 0, addonId, now);
-            if (Configuration.DebugMode)
+            source = "payload";
+        }
+        else
+        {
+            if (fccMatches)
             {
-                Svc.Log.Information($"[QuickTransfer] (MMB) Resolved active Company Chest tab from payload: {curPage} (addonId={addonId})");
+                DebugLog("(MMB) Company Chest payload tab probe failed; falling back to hover/selected tab.");
             }
 
-            return true;
-        }
-
-        if (Configuration.DebugMode && fccMatches)
-        {
-            Svc.Log.Information("[QuickTransfer] (MMB) Company Chest payload tab probe failed; falling back to hover/selected tab.");
-        }
-
-        if (TryGetRecentCompanyChestTab(addonId, now, CompanyChestTabMaxAgeMs, includeCrystals: false, out var recentPage, out var source))
-        {
-            QueueMiddleClickSort(recentPage, 0, addonId, now);
-            if (Configuration.DebugMode)
+            if (!TryGetRecentCompanyChestTab(addonId, now, CompanyChestTabMaxAgeMs, includeCrystals: false, out page, out source))
             {
-                Svc.Log.Information($"[QuickTransfer] (MMB) Using {source} Company Chest tab: {recentPage} slot=0 addonId={addonId}");
+                if (!TryResolveCompanyChestSelectedPageFromAtkValues(addonId, out page))
+                {
+                    DebugLog("(MMB) Company Chest tab unknown; no action taken (waiting for a tab click or hover).");
+                    return false;
+                }
+
+                source = "AtkValues";
             }
-
-            return true;
         }
 
-        if (TryResolveCompanyChestSelectedPageFromAtkValues(addonId, out var atkPage))
-        {
-            QueueMiddleClickSort(atkPage, 0, addonId, now);
-            if (Configuration.DebugMode)
-            {
-                Svc.Log.Information($"[QuickTransfer] (MMB) Using Company Chest tab from AtkValues: {atkPage} slot=0 addonId={addonId}");
-            }
-
-            return true;
-        }
-
-        if (Configuration.DebugMode)
-        {
-            Svc.Log.Information("[QuickTransfer] (MMB) Company Chest tab unknown; no action taken (waiting for a tab click or hover).");
-        }
-
-        return false;
+        QueueMiddleClickSort(page, 0, addonId, now);
+        DebugLog($"(MMB) Using {source} Company Chest tab: {page} slot=0 addonId={addonId}");
+        return true;
     }
 
     private void TryQueueMiddleClickSortFromHover(long now)
@@ -428,17 +402,14 @@ public sealed unsafe partial class QuickTransferPlugin
         var hDdi = lastHoverDdi;
         if (hDdi == null || now - hDdi.Value.SeenAtMs > HoverMaxAgeMs)
         {
-            if (TryUpdateLastHoverAddonFromCursorHitTest(now) && TryQueueMiddleClickSortFromLastHoverAddon(now) ||
-                TryQueueMiddleClickSortFromLastHoverAddon(now) ||
+            TryUpdateLastHoverAddonFromCursorHitTest(now);
+            if (TryQueueMiddleClickSortFromLastHoverAddon(now) ||
                 TryQueueMiddleClickSortFromVisibleWindows(now))
             {
                 return;
             }
 
-            if (Configuration.DebugMode)
-            {
-                Svc.Log.Information("[QuickTransfer] (MMB) No recent hover slot/dragdrop captured; cannot queue sort.");
-            }
+            DebugLog("(MMB) No recent hover slot/dragdrop captured; cannot queue sort.");
 
             return;
         }
@@ -466,10 +437,7 @@ public sealed unsafe partial class QuickTransferPlugin
             {
                 var openSlot = DragDropHelpers.PickContextMenuSlot(good.Type, good.Slot);
                 QueueMiddleClickSort(good.Type, openSlot, ddiAddonId, now);
-                if (Configuration.DebugMode)
-                {
-                    Svc.Log.Information($"[QuickTransfer] (MMB) Used last-good target by addonId (no hover metadata): {good.Type} slot={openSlot} addonId={ddiAddonId}");
-                }
+                DebugLog($"(MMB) Used last-good target by addonId (no hover metadata): {good.Type} slot={openSlot} addonId={ddiAddonId}");
 
                 return;
             }
@@ -501,10 +469,7 @@ public sealed unsafe partial class QuickTransferPlugin
         var agent = (AgentInventoryContext*)pendingSort.Value.AgentPtr;
         if (age > DeferredRequestTimeoutMs)
         {
-            if (Configuration.DebugMode)
-            {
-                Svc.Log.Information($"[QuickTransfer] (MMB) Deferred sort timed out (ContextItemCount={(agent != null ? agent->ContextItemCount : -1)}).");
-            }
+            DebugLog($"(MMB) Deferred sort timed out (ContextItemCount={(agent != null ? agent->ContextItemCount : -1)}).");
 
             pendingDeferredSortMenuClick = null;
             pendingMiddleClickSortUntilMs = 0;

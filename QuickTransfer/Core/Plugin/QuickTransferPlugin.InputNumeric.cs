@@ -1,3 +1,4 @@
+using Dalamud.Game;
 using Dalamud.Game.Addon.Lifecycle;
 using Dalamud.Game.Addon.Lifecycle.AddonArgTypes;
 using FFXIVClientStructs.FFXIV.Component.GUI;
@@ -10,6 +11,19 @@ public sealed unsafe partial class QuickTransferPlugin
 {
     private static bool PromptMatchesKind(PendingNumericKind kind, string prompt)
     {
+        // Prompt keywords are English; other clients use the window that asked for the quantity instead.
+        if (Svc.Data.Language != ClientLanguage.English)
+        {
+            return kind switch
+            {
+                PendingNumericKind.Store or PendingNumericKind.Remove => InventoryHelpers.IsCompanyChestOpen(),
+                PendingNumericKind.Trade => InventoryHelpers.IsTradeOpen(),
+                PendingNumericKind.Sell => InventoryHelpers.IsVendorOpen(),
+                PendingNumericKind.Split => false,
+                var _ => true
+            };
+        }
+
         var expected = kind switch
         {
             PendingNumericKind.Store => "store",
@@ -62,10 +76,7 @@ public sealed unsafe partial class QuickTransferPlugin
                 return;
             }
 
-            if (Configuration.DebugMode)
-            {
-                Svc.Log.Information($"[QuickTransfer] InputNumeric PreSetup (armed): AtkValueCount={count}");
-            }
+            DebugLog($"InputNumeric PreSetup (armed): AtkValueCount={count}");
 
             var prompt = AtkValueHelpers.ReadStringOrEmpty(values + 6);
             if (pendingNumericKind is PendingNumericKind.Store or PendingNumericKind.Remove or PendingNumericKind.Sell &&
@@ -76,10 +87,7 @@ public sealed unsafe partial class QuickTransferPlugin
 
             if (values[2].Type != AtkValueType.UInt || values[3].Type != AtkValueType.UInt || values[4].Type != AtkValueType.UInt)
             {
-                if (Configuration.DebugMode)
-                {
-                    Svc.Log.Information($"[QuickTransfer] InputNumeric PreSetup: unexpected types: [2]={values[2].Type}, [3]={values[3].Type}, [4]={values[4].Type}");
-                }
+                DebugLog($"InputNumeric PreSetup: unexpected types: [2]={values[2].Type}, [3]={values[3].Type}, [4]={values[4].Type}");
 
                 return;
             }
@@ -139,7 +147,7 @@ public sealed unsafe partial class QuickTransferPlugin
             }
 
             uint desired;
-            if (pendingCompanyChestNumericHalf)
+            if (pendingNumericHalf)
             {
                 if (kind == PendingNumericKind.Remove && max <= 1 || kind == PendingNumericKind.Split && max == 0)
                 {
@@ -147,11 +155,11 @@ public sealed unsafe partial class QuickTransferPlugin
                 }
 
                 desired = kind == PendingNumericKind.Remove ? max / 2 : (max + 1) / 2;
-                pendingCompanyChestNumericHalf = false;
+                pendingNumericHalf = false;
             }
             else
             {
-                desired = pendingCompanyChestNumericDesired != 0 ? pendingCompanyChestNumericDesired : Math.Max(min, max);
+                desired = pendingNumericDesired != 0 ? pendingNumericDesired : Math.Max(min, max);
             }
 
             if (desired < min)
@@ -169,7 +177,7 @@ public sealed unsafe partial class QuickTransferPlugin
                 desired = min;
             }
 
-            pendingCompanyChestNumericDesired = desired;
+            pendingNumericDesired = desired;
 
             var beforeDefault = defaultValue->UInt;
             var beforeCurrent = DescribeInputNumericCurrent(currentValue);

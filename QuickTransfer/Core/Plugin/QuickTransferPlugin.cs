@@ -71,11 +71,11 @@ public sealed unsafe partial class QuickTransferPlugin(IDalamudPluginInterface p
     private long suppressInputNumericUntilMs;
 
     private PendingNumericKind pendingNumericKind;
-    private long pendingCompanyChestNumericConfirmUntilMs;
-    private uint pendingCompanyChestNumericDesired;
-    private bool pendingCompanyChestNumericHalf;
-    private bool pendingCompanyChestNumericValueSet;
-    private long pendingCompanyChestNumericValueSetAtMs;
+    private long pendingNumericConfirmUntilMs;
+    private uint pendingNumericDesired;
+    private bool pendingNumericHalf;
+    private bool pendingNumericValueSet;
+    private long pendingNumericValueSetAtMs;
     private uint pendingSplitExpectedMax;
     private long pendingSplitExpectedUntilMs;
 
@@ -99,6 +99,9 @@ public sealed unsafe partial class QuickTransferPlugin(IDalamudPluginInterface p
         Configuration.Initialize(Svc.PluginInterface);
         MigrateConfiguration();
         Configuration.SanitizeKeybindings();
+
+        ContextMenuHandler.LoadLocalizedLabels();
+        LoadCompanyChestBusyLogMessageIds();
 
         pluginUi = new(Configuration);
         windowSystem.AddWindow(pluginUi);
@@ -126,6 +129,10 @@ public sealed unsafe partial class QuickTransferPlugin(IDalamudPluginInterface p
         }
 
         Svc.Chat.ChatMessage += OnChatMessage;
+        if (companyChestBusyLogMessageIds.Count > 0)
+        {
+            Svc.Chat.LogMessage += OnLogMessage;
+        }
 
         Svc.Log.Information($"Loaded {Svc.PluginInterface.Manifest.Name}.");
         Svc.Log.Information(
@@ -158,6 +165,7 @@ public sealed unsafe partial class QuickTransferPlugin(IDalamudPluginInterface p
             Svc.Framework.Update -= OnFrameworkUpdate;
             Svc.ContextMenu.OnMenuOpened -= OnContextMenuOpened;
             Svc.Chat.ChatMessage -= OnChatMessage;
+            Svc.Chat.LogMessage -= OnLogMessage;
             Svc.AddonLifecycle.UnregisterListener(AddonEvent.PreSetup, QuickTransferConstants.InputNumericAddonName, OnInputNumericPreSetup);
             Svc.AddonLifecycle.UnregisterListener(AddonEvent.PreDraw, QuickTransferConstants.ContextMenuAddonName, OnAddonPreDraw);
             Svc.AddonLifecycle.UnregisterListener(AddonEvent.PreDraw, QuickTransferConstants.InputNumericAddonName, OnAddonPreDraw);
@@ -248,12 +256,12 @@ public sealed unsafe partial class QuickTransferPlugin(IDalamudPluginInterface p
 
     private void ArmPendingNumeric(long now, PendingNumericKind kind, int windowMs, bool half = false, int suppressMs = 0)
     {
-        pendingCompanyChestNumericConfirmUntilMs = windowMs > 0 ? now + windowMs : 0;
+        pendingNumericConfirmUntilMs = windowMs > 0 ? now + windowMs : 0;
         pendingNumericKind = kind;
-        pendingCompanyChestNumericValueSet = false;
-        pendingCompanyChestNumericValueSetAtMs = 0;
-        pendingCompanyChestNumericDesired = 0;
-        pendingCompanyChestNumericHalf = half;
+        pendingNumericValueSet = false;
+        pendingNumericValueSetAtMs = 0;
+        pendingNumericDesired = 0;
+        pendingNumericHalf = half;
         if (suppressMs > 0)
         {
             ArmSuppressInputNumeric(now, suppressMs);
@@ -262,17 +270,25 @@ public sealed unsafe partial class QuickTransferPlugin(IDalamudPluginInterface p
 
     private void ClearPendingNumeric(bool restoreInputNumericAlpha = false)
     {
-        pendingCompanyChestNumericConfirmUntilMs = 0;
+        pendingNumericConfirmUntilMs = 0;
         pendingNumericKind = PendingNumericKind.None;
-        pendingCompanyChestNumericValueSet = false;
-        pendingCompanyChestNumericValueSetAtMs = 0;
-        pendingCompanyChestNumericDesired = 0;
-        pendingCompanyChestNumericHalf = false;
+        pendingNumericValueSet = false;
+        pendingNumericValueSetAtMs = 0;
+        pendingNumericDesired = 0;
+        pendingNumericHalf = false;
         pendingSplitExpectedMax = 0;
         pendingSplitExpectedUntilMs = 0;
         if (restoreInputNumericAlpha)
         {
             suppressInputNumericUntilMs = 0;
+        }
+    }
+
+    private void DebugLog(string message)
+    {
+        if (Configuration.DebugMode)
+        {
+            Svc.Log.Information($"[QuickTransfer] {message}");
         }
     }
 
@@ -341,10 +357,7 @@ public sealed unsafe partial class QuickTransferPlugin(IDalamudPluginInterface p
 
         if (InventoryHelpers.ShouldYieldQuickTransferForRetainerMarket(Configuration, mode.Value, inventoryType))
         {
-            if (Configuration.DebugMode)
-            {
-                Svc.Log.Information("[QuickTransfer] Yielding quick transfer - retainer sell list open.");
-            }
+            DebugLog("Yielding quick transfer - retainer sell list open.");
 
             return;
         }
@@ -383,10 +396,7 @@ public sealed unsafe partial class QuickTransferPlugin(IDalamudPluginInterface p
         if (ContextMenuHandler.TryAutoSelectFromAgent(agent, mode.Value, Configuration, out var chosenText, out var chosenIndex, ref pendingCloseContextMenuAtMs))
         {
             lastActionTickMs = now;
-            if (Configuration.DebugMode)
-            {
-                Svc.Log.Information($"[QuickTransfer] ({mode} + RClick) Selected context action '{chosenText}' (idx={chosenIndex}) via OpenForItemSlot.");
-            }
+            DebugLog($"({mode} + RClick) Selected context action '{chosenText}' (idx={chosenIndex}) via OpenForItemSlot.");
 
             ArmTradeOrSellConfirm(now, mode.Value, chosenText, requireTradeWindow: true);
         }
@@ -420,10 +430,7 @@ public sealed unsafe partial class QuickTransferPlugin(IDalamudPluginInterface p
             return;
         }
 
-        if (Configuration.DebugMode)
-        {
-            Svc.Log.Information($"[QuickTransfer] OnMenuOpened: AddonName='{args.AddonName}', MenuType={args.MenuType}, AgentPtr=0x{args.AgentPtr.ToInt64():X}, AddonPtr=0x{args.AddonPtr.ToInt64():X}");
-        }
+        DebugLog($"OnMenuOpened: AddonName='{args.AddonName}', MenuType={args.MenuType}, AgentPtr=0x{args.AgentPtr.ToInt64():X}, AddonPtr=0x{args.AddonPtr.ToInt64():X}");
 
         if (middleSortActive &&
             args.MenuType == ContextMenuType.Inventory &&
@@ -456,10 +463,7 @@ public sealed unsafe partial class QuickTransferPlugin(IDalamudPluginInterface p
             var agent = (AgentInventoryContext*)args.AgentPtr;
             if (InventoryHelpers.ShouldYieldQuickTransferForRetainerMarket(Configuration, mode.Value, agent->TargetInventoryId))
             {
-                if (Configuration.DebugMode)
-                {
-                    Svc.Log.Information("[QuickTransfer] Yielding deferred quick transfer - retainer sell list open.");
-                }
+                DebugLog("Yielding deferred quick transfer - retainer sell list open.");
 
                 return;
             }
@@ -571,12 +575,12 @@ public sealed unsafe partial class QuickTransferPlugin(IDalamudPluginInterface p
                                 Configuration.AutoConfirmCompanyChestQuantity && pendingNumericKind != PendingNumericKind.None;
 
         var armed = pendingNumericKind != PendingNumericKind.None &&
-                    pendingCompanyChestNumericConfirmUntilMs > 0 &&
-                    now <= pendingCompanyChestNumericConfirmUntilMs;
+                    pendingNumericConfirmUntilMs > 0 &&
+                    now <= pendingNumericConfirmUntilMs;
 
         if (!shouldAutoConfirm || !armed)
         {
-            if (pendingCompanyChestNumericConfirmUntilMs > 0 && now > pendingCompanyChestNumericConfirmUntilMs)
+            if (pendingNumericConfirmUntilMs > 0 && now > pendingNumericConfirmUntilMs)
             {
                 ClearPendingNumeric(restoreInputNumericAlpha: true);
             }
@@ -597,10 +601,7 @@ public sealed unsafe partial class QuickTransferPlugin(IDalamudPluginInterface p
             try
             {
                 selectYesno.Yes();
-                if (Configuration.DebugMode)
-                {
-                    Svc.Log.Information("[QuickTransfer] Auto-confirmed vendor sell Yes/No dialog (SelectYesno).");
-                }
+                DebugLog("Auto-confirmed vendor sell Yes/No dialog (SelectYesno).");
             }
             catch (Exception ex)
             {
@@ -620,12 +621,12 @@ public sealed unsafe partial class QuickTransferPlugin(IDalamudPluginInterface p
     private bool ConfirmInputNumeric(long now, AtkUnitBase* inputNumeric)
     {
         ArmSuppressInputNumeric(now);
-        if (!pendingCompanyChestNumericValueSet)
+        if (!pendingNumericValueSet)
         {
             if (TrySetInputNumericToMax(inputNumeric, pendingNumericKind))
             {
-                pendingCompanyChestNumericValueSet = true;
-                pendingCompanyChestNumericValueSetAtMs = now;
+                pendingNumericValueSet = true;
+                pendingNumericValueSetAtMs = now;
             }
             else
             {
@@ -636,7 +637,7 @@ public sealed unsafe partial class QuickTransferPlugin(IDalamudPluginInterface p
             return true;
         }
 
-        if (now - pendingCompanyChestNumericValueSetAtMs < 50)
+        if (now - pendingNumericValueSetAtMs < 50)
         {
             return true;
         }
@@ -650,7 +651,7 @@ public sealed unsafe partial class QuickTransferPlugin(IDalamudPluginInterface p
 
         try
         {
-            var toConfirm = pendingCompanyChestNumericDesired;
+            var toConfirm = pendingNumericDesired;
             if (toConfirm == 0)
             {
                 var maxVal = inputNumeric->AtkValues + 3;
@@ -668,10 +669,7 @@ public sealed unsafe partial class QuickTransferPlugin(IDalamudPluginInterface p
             }
 
             inputNumeric->FireCallbackInt((int)toConfirm);
-            if (Configuration.DebugMode)
-            {
-                Svc.Log.Information($"[QuickTransfer] Auto-confirmed InputNumeric (kind={pendingNumericKind}, FireCallbackInt={toConfirm}).");
-            }
+            DebugLog($"Auto-confirmed InputNumeric (kind={pendingNumericKind}, FireCallbackInt={toConfirm}).");
 
             ClearPendingNumeric(restoreInputNumericAlpha: true);
         }
@@ -748,10 +746,7 @@ public sealed unsafe partial class QuickTransferPlugin(IDalamudPluginInterface p
         // Calling OpenForItemSlot with an inventory type the agent does not expect can crash the client.
         if (!InventoryHelpers.IsSortableContainerType(type))
         {
-            if (Configuration.DebugMode)
-            {
-                Svc.Log.Information($"[QuickTransfer] (MMB) Refusing to call OpenForItemSlot for unrecognized inventory type={type} slot={slot} addonId={addonId}.");
-            }
+            DebugLog($"(MMB) Refusing to call OpenForItemSlot for unrecognized inventory type={type} slot={slot} addonId={addonId}.");
 
             pendingMiddleClickSortRequest = null;
             pendingMiddleClickSortUntilMs = 0;
@@ -778,10 +773,7 @@ public sealed unsafe partial class QuickTransferPlugin(IDalamudPluginInterface p
     private void OpenSortContextMenu(long now, AgentInventoryContext* invCtx, InventoryType type, int slot, uint addonId)
     {
         ArmSuppressContextMenu(now);
-        if (Configuration.DebugMode)
-        {
-            Svc.Log.Information($"[QuickTransfer] (MMB) Calling OpenForItemSlot: type={type} slot={slot} addonId={addonId}");
-        }
+        DebugLog($"(MMB) Calling OpenForItemSlot: type={type} slot={slot} addonId={addonId}");
 
         // The meaning of a4 is unknown; try the value the game last used for this addon first, then common values.
         int[] candidates = observedContextA4.TryGetValue((addonId, (uint)type), out var observedA4)
@@ -805,13 +797,10 @@ public sealed unsafe partial class QuickTransferPlugin(IDalamudPluginInterface p
         var cm = InventoryHelpers.GetAddonByName(QuickTransferConstants.ContextMenuAddonName);
         pendingDeferredSortMenuClick = ((nint)invCtx, (nint)cm, now);
 
-        if (Configuration.DebugMode)
-        {
-            Svc.Log.Information(
-                $"[QuickTransfer] (MMB) Post OpenForItemSlot: opened={(opened ? 1 : 0)} usedA4={usedA4} ContextItemCount={invCtx->ContextItemCount}, " +
-                $"OwnerAddonId={invCtx->OwnerAddonId}, BlockingAddonId={invCtx->BlockingAddonId}, " +
-                $"TargetInv={invCtx->TargetInventoryId}, TargetSlot={invCtx->TargetInventorySlotId}");
-        }
+        DebugLog(
+            $"(MMB) Post OpenForItemSlot: opened={(opened ? 1 : 0)} usedA4={usedA4} ContextItemCount={invCtx->ContextItemCount}, " +
+            $"OwnerAddonId={invCtx->OwnerAddonId}, BlockingAddonId={invCtx->BlockingAddonId}, " +
+            $"TargetInv={invCtx->TargetInventoryId}, TargetSlot={invCtx->TargetInventorySlotId}");
     }
 
     private void ProcessPendingContextMenuClose(long now)
@@ -900,10 +889,7 @@ public sealed unsafe partial class QuickTransferPlugin(IDalamudPluginInterface p
             var agent = (AgentInventoryContext*)pending.Value.AgentPtr;
             if (InventoryHelpers.ShouldYieldQuickTransferForRetainerMarket(Configuration, mode, agent->TargetInventoryId))
             {
-                if (Configuration.DebugMode)
-                {
-                    Svc.Log.Information("[QuickTransfer] Skipping deferred quick transfer - retainer sell list open.");
-                }
+                DebugLog("Skipping deferred quick transfer - retainer sell list open.");
 
                 ProcessDeferredSortMenuClick(now);
                 return;
@@ -926,10 +912,7 @@ public sealed unsafe partial class QuickTransferPlugin(IDalamudPluginInterface p
             {
                 lastActionTickMs = now;
                 ArmPendingNumericForDeferredSelection(now, agent, mode, chosenText);
-                if (Configuration.DebugMode)
-                {
-                    Svc.Log.Information($"[QuickTransfer] ({mode} + RClick) Selected context action '{chosenText}' (idx={chosenIndex}) via deferred OnMenuOpened.");
-                }
+                DebugLog($"({mode} + RClick) Selected context action '{chosenText}' (idx={chosenIndex}) via deferred OnMenuOpened.");
             }
             else if (Configuration.DebugMode && mode == ModifierMode.Ctrl)
             {
