@@ -9,7 +9,7 @@ public class PluginUI : Window
 {
     private const string WindowId = "QuickTransfer";
 
-    private static readonly Vector4 HeaderColor = new(0.45f, 0.78f, 1f, 1f);
+    private static readonly Vector4 HeaderColor = QuickTransferTheme.Heading;
     private static readonly Vector4 MutedColor = new(0.65f, 0.65f, 0.65f, 1f);
     private static readonly Vector4 WarningColor = new(0.95f, 0.75f, 0.35f, 1f);
     private static readonly Vector4 ActiveColor = new(0.45f, 0.9f, 0.55f, 1f);
@@ -45,6 +45,8 @@ public class PluginUI : Window
         base.OnClose();
     }
 
+    public override void PreDraw() => QuickTransferTheme.Push();
+
     public override void PostDraw()
     {
         if (!drewTitleBarVersion)
@@ -56,6 +58,7 @@ public class PluginUI : Window
         }
 
         drewTitleBarVersion = false;
+        QuickTransferTheme.Pop();
         base.PostDraw();
     }
 
