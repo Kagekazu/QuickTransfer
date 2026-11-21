@@ -229,8 +229,8 @@ public sealed unsafe partial class QuickTransferPlugin
                 }
 
                 var ni = (AtkComponentNumericInput*)comp;
-                AtkValueHelpers.WriteUtf8StringInPlace(&ni->RawString, desiredStr);
-                AtkValueHelpers.WriteUtf8StringInPlace(&ni->EvaluatedString, desiredStr);
+                ni->RawString.SetString(desiredStr);
+                ni->EvaluatedString.SetString(desiredStr);
                 ni->SetValue((int)desired);
                 ni->CursorPos = (ushort)desiredStr.Length;
                 ni->SelectionStart = ni->CursorPos;

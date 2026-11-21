@@ -7,6 +7,7 @@ namespace QuickTransfer;
 public sealed unsafe partial class QuickTransferPlugin
 {
     private const long HoverMaxAgeMs = 20000;
+    private const long NativeSortMenuWindowMs = 300;
 
     // Inventory's owner addon id is commonly 17, with collision hits on child ids whose HostId/ParentId point at it.
     private const uint InventoryOwnerAddonIdHeuristic = 17;
@@ -212,78 +213,6 @@ public sealed unsafe partial class QuickTransferPlugin
         }
     }
 
-    // Last resort when nothing is hovered: act only if exactly one sortable window is open.
-    private bool TryQueueMiddleClickSortFromVisibleWindows(long now)
-    {
-        try
-        {
-            var visibleCount = 0;
-            InventoryType chosenType = default;
-            var chosenSlot = -1;
-            uint chosenAddonId = 0;
-
-            void Consider(InventoryType[] containers, params string[] addonNames)
-            {
-                foreach (var name in addonNames)
-                {
-                    if (!InventoryHelpers.TryGetVisibleAddon(name, out var addon, WideAddonSearchMaxIndex))
-                    {
-                        continue;
-                    }
-
-                    if (InventoryHelpers.TryFindFirstOccupiedSlot(containers, out var t, out var s))
-                    {
-                        visibleCount++;
-                        (chosenType, chosenSlot, chosenAddonId) = (t, s, addon->Id);
-                    }
-
-                    return;
-                }
-            }
-
-            Consider(InventoryHelpers.ArmouryInventoryTypes, ArmouryBoardAddonName);
-            Consider(InventoryHelpers.SaddlebagInventoryTypes, SaddlebagAddonName, Saddlebag2AddonName);
-            Consider(InventoryHelpers.PlayerInventoryTypes, InventoryAddonName);
-            Consider(InventoryHelpers.RetainerInventoryTypes, RetainerGrid0AddonName, RetainerGridAddonName, RetainerSellListAddonName);
-
-            // The FC chest has no native Sort; queuing one of its pages triggers the organize pass.
-            if (InventoryHelpers.TryGetVisibleAddon(FreeCompanyChestAddonName, out var fcc, WideAddonSearchMaxIndex))
-            {
-                var page = default(InventoryType?);
-                if (TryGetRecentCompanyChestTab(fcc->Id, now, HoverMaxAgeMs, includeCrystals: false, out var recentPage, out var _))
-                {
-                    page = recentPage;
-                }
-                else if (GetCompanyChestInventoryTypes() is { Length: > 0 } pages)
-                {
-                    page = pages[0];
-                }
-
-                if (page != null)
-                {
-                    visibleCount++;
-                    (chosenType, chosenSlot, chosenAddonId) = (page.Value, 0, fcc->Id);
-                }
-            }
-
-            if (visibleCount != 1 || chosenAddonId == 0 || chosenSlot < 0)
-            {
-                return false;
-            }
-
-            var openSlot = DragDropHelpers.PickContextMenuSlot(chosenType, chosenSlot);
-            QueueMiddleClickSort(chosenType, openSlot, chosenAddonId, now);
-
-            DebugLog($"(MMB) No hover DDI; bootstrapped from visible window: {chosenType} slot={openSlot} addonId={chosenAddonId}");
-
-            return true;
-        }
-        catch
-        {
-            return false;
-        }
-    }
-
     private bool TryQueueMiddleClickSortFromLastHoverAddon(long now)
     {
         try
@@ -403,8 +332,7 @@ public sealed unsafe partial class QuickTransferPlugin
         if (hDdi == null || now - hDdi.Value.SeenAtMs > HoverMaxAgeMs)
         {
             TryUpdateLastHoverAddonFromCursorHitTest(now);
-            if (TryQueueMiddleClickSortFromLastHoverAddon(now) ||
-                TryQueueMiddleClickSortFromVisibleWindows(now))
+            if (TryQueueMiddleClickSortFromLastHoverAddon(now))
             {
                 return;
             }
@@ -442,8 +370,8 @@ public sealed unsafe partial class QuickTransferPlugin
                 return;
             }
 
-            // Open a short window so a native context menu opened by this press is still treated as a sort.
-            pendingMiddleClickSortUntilMs = now + DeferredRequestTimeoutMs;
+            // Kept short: any menu opened inside this window is treated as a sort, including a quick Shift + right-click.
+            pendingMiddleClickSortUntilMs = now + NativeSortMenuWindowMs;
             lastMiddleClickSortMs = now;
         }
         catch (Exception ex)

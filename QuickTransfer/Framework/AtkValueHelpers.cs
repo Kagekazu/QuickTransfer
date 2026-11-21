@@ -1,4 +1,3 @@
-using FFXIVClientStructs.FFXIV.Client.System.String;
 using FFXIVClientStructs.FFXIV.Component.GUI;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -47,64 +46,6 @@ internal static unsafe class AtkValueHelpers
         }
 
         dst[max] = 0;
-    }
-
-    public static void WriteUtf8StringInPlace(Utf8String* s, string value)
-    {
-        if (s == null)
-        {
-            return;
-        }
-
-        WriteUtf8InPlace(s->StringPtr, value);
-        s->StringLength = value.Length;
-        s->BufUsed = value.Length + 1;
-    }
-
-    public static void GenerateCallback(AtkUnitBase* unitBase, params object[] values)
-    {
-        var atkValues = (AtkValue*)Marshal.AllocHGlobal(values.Length * sizeof(AtkValue));
-        var stringAllocs = new List<nint>();
-        try
-        {
-            for (var i = 0; i < values.Length; i++)
-            {
-                switch (values[i])
-                {
-                    case uint u:
-                        atkValues[i].Type = AtkValueType.UInt;
-                        atkValues[i].UInt = u;
-                        break;
-                    case int n:
-                        atkValues[i].Type = AtkValueType.Int;
-                        atkValues[i].Int = n;
-                        break;
-                    case bool b:
-                        atkValues[i].Type = AtkValueType.Bool;
-                        atkValues[i].Byte = (byte)(b ? 1 : 0);
-                        break;
-                    case string s:
-                        var str = Marshal.StringToCoTaskMemUTF8(s);
-                        stringAllocs.Add(str);
-                        atkValues[i].Type = AtkValueType.String;
-                        atkValues[i].String = (byte*)str;
-                        break;
-                    default:
-                        throw new ArgumentException($"Unsupported AtkValue type {values[i].GetType()}");
-                }
-            }
-
-            unitBase->FireCallback((uint)values.Length, atkValues);
-        }
-        finally
-        {
-            foreach (var str in stringAllocs)
-            {
-                Marshal.FreeCoTaskMem(str);
-            }
-
-            Marshal.FreeHGlobal((nint)atkValues);
-        }
     }
 
     public static bool TryGetAtkValueInt(AtkValue* values, int count, int idx, out int value)

@@ -16,10 +16,9 @@ public class PluginUI : Window
     private static readonly Vector4 DisabledColor = new(0.55f, 0.55f, 0.55f, 1f);
 
     private readonly Configuration config;
-    private bool drewTitleBarVersion;
 
     public PluginUI(Configuration config)
-        : base($"QuickTransfer###{WindowId}")
+        : base($"QuickTransfer v{Svc.PluginInterface.Manifest.AssemblyVersion}###{WindowId}")
     {
         this.config = config;
 
@@ -41,7 +40,6 @@ public class PluginUI : Window
     public override void OnClose()
     {
         config.PersistIfDirty();
-        TitleBarVersion.ClearCache();
         base.OnClose();
     }
 
@@ -49,27 +47,12 @@ public class PluginUI : Window
 
     public override void PostDraw()
     {
-        if (!drewTitleBarVersion)
-        {
-            TitleBarVersion.DrawFromWindowLookup(
-                TitleBarButtons.Count,
-                AllowPinning || AllowClickthrough,
-                WindowName);
-        }
-
-        drewTitleBarVersion = false;
         QuickTransferTheme.Pop();
         base.PostDraw();
     }
 
     public override void Draw()
     {
-        TitleBarVersion.DrawFromContext(
-            TitleBarButtons.Count,
-            AllowPinning || AllowClickthrough,
-            WindowName);
-        drewTitleBarVersion = true;
-
         DrawHeader();
         ImGui.Spacing();
 
@@ -254,20 +237,6 @@ public class PluginUI : Window
                     }
 
                     Hint("Avoids topping off partial stacks when an empty slot exists - one server check per deposit. Use middle-click organize to stack later.");
-
-                    ImGui.Text("Unlocked item tabs");
-                    ImGui.SetNextItemWidth(220);
-                    var compartments = config.CompanyChestCompartments;
-                    if (ImGui.SliderInt("##CompanyChestCompartments", ref compartments, 3, 5))
-                    {
-                        config.CompanyChestCompartments = compartments;
-                        config.OnSettingChanged();
-                    }
-
-                    ImGui.SameLine();
-                    ImGui.TextColored(MutedColor, $"{compartments} tab(s)");
-
-                    Hint("Match how many item compartments your FC has unlocked (usually 3, up to 5).");
                 }
             });
         }

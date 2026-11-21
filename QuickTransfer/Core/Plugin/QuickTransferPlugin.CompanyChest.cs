@@ -5,6 +5,7 @@ using FFXIVClientStructs.FFXIV.Client.UI;
 using FFXIVClientStructs.FFXIV.Component.GUI;
 using System.Runtime.InteropServices;
 using AtkValueType = FFXIVClientStructs.FFXIV.Component.GUI.AtkValueType;
+using Callback = ECommons.Automation.Callback;
 using LogMessageSheet = Lumina.Excel.Sheets.LogMessage;
 
 namespace QuickTransfer;
@@ -14,13 +15,6 @@ public sealed unsafe partial class QuickTransferPlugin
     private const int CompanyChestSlotCap = 80;
     private const int CompanyChestCrystalSlotCap = 64;
     private const long CompanyChestTabMaxAgeMs = 180_000;
-
-    private static readonly string[] CompanyChestBusyPhrases =
-    [
-        "Another player is using the chest",
-        "Unable to store item",
-        "Unable to complete company chest action"
-    ];
 
     private readonly HashSet<uint> companyChestBusyLogMessageIds = [];
 
@@ -63,17 +57,13 @@ public sealed unsafe partial class QuickTransferPlugin
         }
     }
 
-    private InventoryType[] GetCompanyChestInventoryTypes(int? maxCompartments = null)
-    {
-        var max = Math.Clamp(maxCompartments ?? Configuration.CompanyChestCompartments, 3, 5);
-        return
-        [
-            .. Enum.GetValues<InventoryType>()
-                .Where(InventoryHelpers.IsCompanyChestType)
-                .OrderBy(v => (int)v)
-                .Take(max)
-        ];
-    }
+    private static readonly InventoryType[] CompanyChestItemPages =
+    [
+        .. Enum.GetValues<InventoryType>()
+            .Where(InventoryHelpers.IsCompanyChestType)
+            .OrderBy(v => (int)v)
+            .Take(5)
+    ];
 
     // Busy/rollback responses back off exponentially: 5s, 10s, 20s, 40s, capped at 60s.
     private long RegisterCompanyChestBusyHit(long now)
@@ -385,13 +375,13 @@ public sealed unsafe partial class QuickTransferPlugin
                 return;
             }
 
-            var text = message.Sender.TextValue;
+            var text = message.Message.TextValue;
             if (text.Length == 0)
             {
                 return;
             }
 
-            if (CompanyChestBusyPhrases.Any(p => text.Contains(p, StringComparison.OrdinalIgnoreCase)))
+            if (CompanyChestPlanner.IsBusyText(text))
             {
                 OnCompanyChestBusyMessage(text);
             }
@@ -414,7 +404,7 @@ public sealed unsafe partial class QuickTransferPlugin
             foreach (var row in Svc.Data.GetExcelSheet<LogMessageSheet>(ClientLanguage.English))
             {
                 var text = row.Text.ExtractText();
-                if (CompanyChestBusyPhrases.Any(p => text.Contains(p, StringComparison.OrdinalIgnoreCase)))
+                if (CompanyChestPlanner.IsBusyText(text))
                 {
                     companyChestBusyLogMessageIds.Add(row.RowId);
                 }
@@ -840,6 +830,7 @@ public sealed unsafe partial class QuickTransferPlugin
                 o.WaitUntilMs = 0;
                 o.WaitStuckCount = 0;
                 o.WaitObservedChangeAtMs = 0;
+                o.ExpiresAtMs = Math.Max(o.ExpiresAtMs, now + 20000);
                 return true;
             }
 
@@ -938,150 +929,65 @@ public sealed unsafe partial class QuickTransferPlugin
         DebugLog($"(MMB) Company Chest organize step {o.Steps}: {srcType} slot={srcSlot} -> {dstType} slot={dstSlot} (phase={phaseName}, numeric={needsNumeric}).");
     }
 
-    // Finds a non-full stack and a later stack of the same item (and HQ flag) to merge into it.
+    private static ChestSlot[] SnapshotPage(InventoryManager* inv, InventoryType type, int cap)
+    {
+        List<ChestSlot> slots = [];
+        for (var i = 0; i < cap; i++)
+        {
+            var it = inv->GetInventorySlot(type, i);
+            if (it == null)
+            {
+                break;
+            }
+
+            slots.Add(new(it->ItemId, it->Quantity, it->Flags.HasFlag(InventoryItem.ItemFlags.HighQuality)));
+        }
+
+        return [.. slots];
+    }
+
+    private static List<ChestSlot[]>? SnapshotPages(InventoryType[] pages, int cap = CompanyChestSlotCap)
+    {
+        var inv = InventoryManager.Instance();
+        return inv == null ? null : [.. pages.Select(p => SnapshotPage(inv, p, cap))];
+    }
+
     private static bool TryFindCompanyChestMergeMove(
         InventoryType[] pages,
         out InventoryType srcType,
         out uint srcSlot,
         out InventoryType dstType,
         out uint dstSlot)
-    {
-        srcType = default;
-        srcSlot = 0;
-        dstType = default;
-        dstSlot = 0;
+        => ToMove(pages, SnapshotPages(pages) is { } snap ? CompanyChestPlanner.FindMergeMove(snap, InventoryHelpers.GetItemStackSize) : null,
+            out srcType, out srcSlot, out dstType, out dstSlot);
 
-        var inv = InventoryManager.Instance();
-        if (inv == null)
-        {
-            return false;
-        }
-
-        for (var dp = 0; dp < pages.Length; dp++)
-        {
-            var dt = pages[dp];
-            for (var di = 0; di < CompanyChestSlotCap; di++)
-            {
-                var d = inv->GetInventorySlot(dt, di);
-                if (d == null)
-                {
-                    break;
-                }
-
-                if (d->ItemId == 0 || d->Quantity <= 0)
-                {
-                    continue;
-                }
-
-                var itemId = d->ItemId;
-                var isHq = d->Flags.HasFlag(InventoryItem.ItemFlags.HighQuality);
-                var maxStack = InventoryHelpers.GetItemStackSize(itemId);
-                if (maxStack <= 1 || (int)maxStack - d->Quantity <= 0)
-                {
-                    continue;
-                }
-
-                var destGlobalIndex = dp * CompanyChestSlotCap + di;
-                for (var sp = 0; sp < pages.Length; sp++)
-                {
-                    var st = pages[sp];
-                    for (var si = 0; si < CompanyChestSlotCap; si++)
-                    {
-                        var s = inv->GetInventorySlot(st, si);
-                        if (s == null)
-                        {
-                            break;
-                        }
-
-                        if (s->ItemId != itemId ||
-                            s->Quantity <= 0 ||
-                            s->Flags.HasFlag(InventoryItem.ItemFlags.HighQuality) != isHq ||
-                            sp * CompanyChestSlotCap + si <= destGlobalIndex)
-                        {
-                            continue;
-                        }
-
-                        srcType = st;
-                        srcSlot = (uint)si;
-                        dstType = dt;
-                        dstSlot = (uint)di;
-                        return true;
-                    }
-                }
-            }
-        }
-
-        return false;
-    }
-
-    // Finds the first empty slot and the next occupied slot after it.
     private static bool TryFindCompanyChestCompactionMove(
         InventoryType[] pages,
         out InventoryType srcType,
         out uint srcSlot,
         out InventoryType dstType,
         out uint dstSlot)
-    {
-        srcType = default;
-        srcSlot = 0;
-        dstType = default;
-        dstSlot = 0;
+        => ToMove(pages, SnapshotPages(pages) is { } snap ? CompanyChestPlanner.FindCompactionMove(snap) : null,
+            out srcType, out srcSlot, out dstType, out dstSlot);
 
-        var inv = InventoryManager.Instance();
-        if (inv == null)
+    private static bool ToMove(
+        InventoryType[] pages,
+        ChestMove? move,
+        out InventoryType srcType,
+        out uint srcSlot,
+        out InventoryType dstType,
+        out uint dstSlot)
+    {
+        if (move is not { } m)
         {
+            (srcType, srcSlot, dstType, dstSlot) = (default, 0, default, 0);
             return false;
         }
 
-        for (var dp = 0; dp < pages.Length; dp++)
-        {
-            var dt = pages[dp];
-            for (var di = 0; di < CompanyChestSlotCap; di++)
-            {
-                var d = inv->GetInventorySlot(dt, di);
-                if (d == null)
-                {
-                    break;
-                }
-
-                if (d->ItemId != 0)
-                {
-                    continue;
-                }
-
-                for (var sp = dp; sp < pages.Length; sp++)
-                {
-                    var st = pages[sp];
-                    var start = sp == dp ? di + 1 : 0;
-                    for (var si = start; si < CompanyChestSlotCap; si++)
-                    {
-                        var s = inv->GetInventorySlot(st, si);
-                        if (s == null)
-                        {
-                            break;
-                        }
-
-                        if (s->ItemId == 0 || s->Quantity <= 0)
-                        {
-                            continue;
-                        }
-
-                        srcType = st;
-                        srcSlot = (uint)si;
-                        dstType = dt;
-                        dstSlot = (uint)di;
-                        return true;
-                    }
-                }
-
-                return false;
-            }
-        }
-
-        return false;
+        (srcType, srcSlot, dstType, dstSlot) = (pages[m.SrcPage], (uint)m.SrcSlot, pages[m.DstPage], (uint)m.DstSlot);
+        return true;
     }
 
-    // One selection-sort step: move the smallest later key into the first out-of-order slot.
     // HandleItemMove swaps when the destination is occupied.
     private static bool TryFindCompanyChestSortMove(
         InventoryType[] pages,
@@ -1122,44 +1028,13 @@ public sealed unsafe partial class QuickTransferPlugin
             keys[i] = InventoryHelpers.GetChestSortKey(it->ItemId, it->Flags.HasFlag(InventoryItem.ItemFlags.HighQuality));
         }
 
-        srcType = page;
-        dstType = page;
-
-        // Compaction should already have moved empties to the end; handle any stragglers first.
-        var firstEmpty = Array.IndexOf(empty, true);
-        if (firstEmpty >= 0)
+        if (CompanyChestPlanner.FindSortMove(keys, empty) is not { } move)
         {
-            var nextOccupied = Array.IndexOf(empty, false, firstEmpty + 1);
-            if (nextOccupied >= 0)
-            {
-                srcSlot = (uint)nextOccupied;
-                dstSlot = (uint)firstEmpty;
-                return true;
-            }
+            return false;
         }
 
-        for (var i = 0; i < size && !empty[i]; i++)
-        {
-            var best = i;
-            for (var j = i + 1; j < size && !empty[j]; j++)
-            {
-                if (keys[j].CompareTo(keys[best]) < 0)
-                {
-                    best = j;
-                }
-            }
-
-            if (best != i)
-            {
-                srcSlot = (uint)best;
-                dstSlot = (uint)i;
-                return true;
-            }
-        }
-
-        srcType = default;
-        dstType = default;
-        return false;
+        (srcType, srcSlot, dstType, dstSlot) = (page, (uint)move.Src, page, (uint)move.Dst);
+        return true;
     }
 
     private bool TryCompanyChestMoveItem(
@@ -1187,7 +1062,6 @@ public sealed unsafe partial class QuickTransferPlugin
                 pendingMoveOutValuePtr = Marshal.AllocHGlobal(sizeof(AtkValue));
                 pendingMoveAtkValuesPtr = Marshal.AllocHGlobal(sizeof(AtkValue) * 4);
                 pendingMoveCreatedAtMs = Environment.TickCount64;
-                pendingMoveOutValueFreeAtMs = pendingMoveCreatedAtMs + 8000;
 
                 ret = (AtkValue*)pendingMoveOutValuePtr;
                 values = (AtkValue*)pendingMoveAtkValuesPtr;
@@ -1261,34 +1135,21 @@ public sealed unsafe partial class QuickTransferPlugin
             return true;
         }
 
-        if (TryFindCompanyChestBestStackSlot([InventoryType.FreeCompanyCrystals], itemId, isHq, maxStack, out var _, out destSlot))
-        {
-            return true;
-        }
-
         destSlot = 0;
-        var inv = InventoryManager.Instance();
-        if (inv == null)
+        if (SnapshotPages([InventoryType.FreeCompanyCrystals], CompanyChestCrystalSlotCap) is not { } snap)
         {
             return false;
         }
 
-        for (var i = 0; i < CompanyChestCrystalSlotCap; i++)
+        if (CompanyChestPlanner.FindBestStackSlot(snap, itemId, isHq, maxStack) is { } best)
         {
-            var it = inv->GetInventorySlot(InventoryType.FreeCompanyCrystals, i);
-            if (it == null)
-            {
-                break;
-            }
-
-            if (it->ItemId == itemId)
-            {
-                destSlot = (uint)i;
-                return true;
-            }
+            destSlot = (uint)best.Slot;
+            return true;
         }
 
-        return false;
+        var i = Array.FindIndex(snap[0], s => s.ItemId == itemId);
+        destSlot = i >= 0 ? (uint)i : 0;
+        return i >= 0;
     }
 
     private bool TryResolveCompanyChestDepositDestination(
@@ -1298,100 +1159,23 @@ public sealed unsafe partial class QuickTransferPlugin
         uint maxStack,
         out InventoryType destType,
         out uint destSlot)
-        => Configuration.CompanyChestDepositEmptySlotsFirst
-            ? TryFindCompanyChestFirstEmptySlot(pages, out destType, out destSlot) ||
-              TryFindCompanyChestBestStackSlot(pages, itemId, isHq, maxStack, out destType, out destSlot)
-            : TryFindCompanyChestBestStackSlot(pages, itemId, isHq, maxStack, out destType, out destSlot) ||
-              TryFindCompanyChestFirstEmptySlot(pages, out destType, out destSlot);
-
-    private static bool TryFindCompanyChestFirstEmptySlot(
-        InventoryType[] pages,
-        out InventoryType destType,
-        out uint destSlot)
     {
         destType = default;
         destSlot = 0;
-
-        var inv = InventoryManager.Instance();
-        if (inv == null)
+        if (SnapshotPages(pages) is not { } snap)
         {
             return false;
         }
 
-        foreach (var t in pages)
-        {
-            for (var i = 0; i < CompanyChestSlotCap; i++)
-            {
-                var item = inv->GetInventorySlot(t, i);
-                if (item == null)
-                {
-                    break;
-                }
-
-                if (item->ItemId == 0)
-                {
-                    destType = t;
-                    destSlot = (uint)i;
-                    return true;
-                }
-            }
-        }
-
-        return false;
-    }
-
-    // Picks the matching stack with the most free space.
-    private static bool TryFindCompanyChestBestStackSlot(
-        InventoryType[] pages,
-        uint itemId,
-        bool isHq,
-        uint maxStack,
-        out InventoryType destType,
-        out uint destSlot)
-    {
-        destType = default;
-        destSlot = 0;
-
-        if (itemId == 0 || maxStack <= 1)
+        var emptySlot = CompanyChestPlanner.FindFirstEmptySlot(snap);
+        var stackSlot = CompanyChestPlanner.FindBestStackSlot(snap, itemId, isHq, maxStack);
+        if ((Configuration.CompanyChestDepositEmptySlotsFirst ? emptySlot ?? stackSlot : stackSlot ?? emptySlot) is not { } hit)
         {
             return false;
         }
 
-        var inv = InventoryManager.Instance();
-        if (inv == null)
-        {
-            return false;
-        }
-
-        var bestFree = 0;
-        foreach (var t in pages)
-        {
-            for (var i = 0; i < CompanyChestSlotCap; i++)
-            {
-                var it = inv->GetInventorySlot(t, i);
-                if (it == null)
-                {
-                    break;
-                }
-
-                if (it->ItemId != itemId ||
-                    it->Flags.HasFlag(InventoryItem.ItemFlags.HighQuality) != isHq ||
-                    it->Quantity <= 0)
-                {
-                    continue;
-                }
-
-                var free = (int)maxStack - it->Quantity;
-                if (free > bestFree)
-                {
-                    bestFree = free;
-                    destType = t;
-                    destSlot = (uint)i;
-                }
-            }
-        }
-
-        return bestFree > 0;
+        (destType, destSlot) = (pages[hit.Page], (uint)hit.Slot);
+        return true;
     }
 
     // The FC chest uses a Default context menu, so the AgentInventoryContext index-based selection
@@ -1441,7 +1225,7 @@ public sealed unsafe partial class QuickTransferPlugin
                         continue;
                     }
 
-                    AtkValueHelpers.GenerateCallback((AtkUnitBase*)ctxMenu, 0, i, 0U, 0, 0);
+                    Callback.Fire((AtkUnitBase*)ctxMenu, false, 0, i, 0U, 0, 0);
 
                     // Closing immediately can cancel the action.
                     pendingCloseContextMenuAtMs = Environment.TickCount64 + 50;
@@ -1471,13 +1255,12 @@ public sealed unsafe partial class QuickTransferPlugin
             return true;
         }
 
-        var pages = GetCompanyChestInventoryTypes(5);
-        if (eventParam < 1 || eventParam > pages.Length)
+        if (eventParam < 1 || eventParam > CompanyChestItemPages.Length)
         {
             return false;
         }
 
-        page = pages[eventParam - 1];
+        page = CompanyChestItemPages[eventParam - 1];
         return true;
     }
 }

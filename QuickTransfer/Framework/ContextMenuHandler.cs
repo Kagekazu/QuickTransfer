@@ -4,6 +4,7 @@ using FFXIVClientStructs.FFXIV.Component.GUI;
 using System.Text.RegularExpressions;
 using Addon = Lumina.Excel.Sheets.Addon;
 using AtkValueType = FFXIVClientStructs.FFXIV.Component.GUI.AtkValueType;
+using Callback = ECommons.Automation.Callback;
 
 namespace QuickTransfer.Framework;
 
@@ -302,24 +303,7 @@ internal static unsafe partial class ContextMenuHandler
             return false;
         }
 
-        Dictionary<AutoContextAction, (int Index, string Text)> found = [];
-        foreach (var (index, text) in items)
-        {
-            foreach (var action in MatchOrder)
-            {
-                if (found.ContainsKey(action) || !ContextLabelMatches(action, text))
-                {
-                    continue;
-                }
-
-                found[action] = (index, text);
-                if (action != AutoContextAction.Trade)
-                {
-                    break;
-                }
-            }
-        }
-
+        var found = ClassifyMenuItems(items);
         foreach (var action in GetActionPreference(mode, configuration, found))
         {
             if (!found.TryGetValue(action, out var hit))
@@ -327,7 +311,7 @@ internal static unsafe partial class ContextMenuHandler
                 continue;
             }
 
-            AtkValueHelpers.GenerateCallback(contextMenuAddon, 0, hit.Index, 0U, 0, 0);
+            Callback.Fire(contextMenuAddon, false, 0, hit.Index, 0U, 0, 0);
 
             // Split and Trade open a follow-up dialog; closing the menu immediately can cancel it.
             if (ContextLabelMatches(AutoContextAction.Split, hit.Text) ||
@@ -346,6 +330,29 @@ internal static unsafe partial class ContextMenuHandler
         }
 
         return false;
+    }
+
+    public static Dictionary<AutoContextAction, (int Index, string Text)> ClassifyMenuItems(IEnumerable<(int Index, string Text)> items)
+    {
+        Dictionary<AutoContextAction, (int Index, string Text)> found = [];
+        foreach (var (index, text) in items)
+        {
+            foreach (var action in MatchOrder)
+            {
+                if (found.ContainsKey(action) || !ContextLabelMatches(action, text))
+                {
+                    continue;
+                }
+
+                found[action] = (index, text);
+                if (action != AutoContextAction.Trade)
+                {
+                    break;
+                }
+            }
+        }
+
+        return found;
     }
 
     private static AutoContextAction[] GetActionPreference(
@@ -411,7 +418,7 @@ internal static unsafe partial class ContextMenuHandler
                 continue;
             }
 
-            AtkValueHelpers.GenerateCallback(contextMenuAddon, 0, index, 0U, 0, 0);
+            Callback.Fire(contextMenuAddon, false, 0, index, 0U, 0, 0);
             CloseContextMenuAddon(agent, contextMenuAddon);
             chosenText = text;
             chosenIndex = index;

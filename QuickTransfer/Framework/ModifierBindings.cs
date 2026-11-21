@@ -51,29 +51,25 @@ public static partial class ModifierBindings
         return configuration.MiddleClickUseXButton2 && x2Down && !prevX2;
     }
 
-    public static bool IsConfiguredMiddleClickDown(Configuration configuration)
-    {
-        if (configuration.MiddleClickUseMButton && IsMouseButtonDown(VkMiddleButton))
-        {
-            return true;
-        }
-
-        if (configuration.MiddleClickUseXButton1 && IsMouseButtonDown(VkXButton1))
-        {
-            return true;
-        }
-
-        return configuration.MiddleClickUseXButton2 && IsMouseButtonDown(VkXButton2);
-    }
-
     public static bool IsMiddleClickEventMask(byte mouseButtonId, byte dragDropMouseButtonId, Configuration configuration) =>
         configuration.MiddleClickUseMButton &&
         ((mouseButtonId & MiddleButtonEventMask) != 0 || (dragDropMouseButtonId & MiddleButtonEventMask) != 0);
 
-    public static bool IsMiddleClickPressed(Configuration configuration, byte mouseButtonId, byte dragDropMouseButtonId, bool? keyStateMiddleDown) =>
-        IsConfiguredMiddleClickDown(configuration) ||
+    // Side buttons carry no event mask, so a button counts only right after its press; a held push-to-talk key does not.
+    public static bool IsMiddleClickPressed(
+        Configuration configuration,
+        byte mouseButtonId,
+        byte dragDropMouseButtonId,
+        bool middleFreshPress,
+        bool x1FreshPress,
+        bool x2FreshPress) =>
         IsMiddleClickEventMask(mouseButtonId, dragDropMouseButtonId, configuration) ||
-        keyStateMiddleDown == true;
+        configuration.MiddleClickUseMButton && middleFreshPress ||
+        configuration.MiddleClickUseXButton1 && x1FreshPress ||
+        configuration.MiddleClickUseXButton2 && x2FreshPress;
+
+    public static bool IsFreshPress(bool isDown, bool wasDownLastFrame, long pressedAtMs, long nowMs, long freshWindowMs = 250) =>
+        isDown && (!wasDownLastFrame || nowMs - pressedAtMs <= freshWindowMs);
 
     public static string FormatRightClickBinding(VirtualKey modifier) => $"{GetDisplayName(modifier)} + Right-click";
 

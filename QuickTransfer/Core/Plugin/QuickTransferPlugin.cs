@@ -7,6 +7,7 @@ using Dalamud.Plugin;
 using Dalamud.Plugin.Services;
 using ECommons;
 using ECommons.EzHookManager;
+using ECommons.Interop;
 using ECommons.UIHelpers.AddonMasterImplementations;
 using FFXIVClientStructs.FFXIV.Client.Game;
 using FFXIVClientStructs.FFXIV.Client.UI.Agent;
@@ -20,7 +21,6 @@ namespace QuickTransfer;
 
 public sealed unsafe partial class QuickTransferPlugin(IDalamudPluginInterface pluginInterface) : IAsyncDalamudPlugin
 {
-    private const int CurrentConfigVersion = 6;
     private const long DeferredRequestTimeoutMs = 1500;
 
     private readonly Dictionary<int, Dictionary<int, InventoryType>> companyChestSelectedTabCandidates = [];
@@ -45,6 +45,9 @@ public sealed unsafe partial class QuickTransferPlugin(IDalamudPluginInterface p
     private bool lastVkMButtonDown;
     private bool lastVkX1ButtonDown;
     private bool lastVkX2ButtonDown;
+    private long lastMButtonPressMs;
+    private long lastX1ButtonPressMs;
+    private long lastX2ButtonPressMs;
     private long lastMiddleClickSortMs;
 
     private (string AddonName, uint AddonId, long SeenAtMs)? lastHoverAddon;
@@ -83,7 +86,6 @@ public sealed unsafe partial class QuickTransferPlugin(IDalamudPluginInterface p
     private nint pendingMoveAtkValuesPtr;
     private nint pendingMoveOutValuePtr;
     private long pendingMoveCreatedAtMs;
-    private long pendingMoveOutValueFreeAtMs;
     private bool pendingMoveSawInputNumeric;
 
     public Configuration Configuration { get; private set; } = null!;
@@ -186,7 +188,7 @@ public sealed unsafe partial class QuickTransferPlugin(IDalamudPluginInterface p
             Svc.Log.Warning(ex, "[QuickTransfer] Error while unregistering during dispose.");
         }
 
-        ReleasePendingMoveBuffers();
+        // Move buffers are deliberately leaked: a quantity prompt left open at unload still reads them.
         ECommonsMain.Dispose();
         return ValueTask.CompletedTask;
     }
@@ -221,7 +223,7 @@ public sealed unsafe partial class QuickTransferPlugin(IDalamudPluginInterface p
 
     private void MigrateConfiguration()
     {
-        if (Configuration.Version >= CurrentConfigVersion)
+        if (Configuration.Version >= Configuration.CurrentVersion)
         {
             return;
         }
@@ -237,7 +239,7 @@ public sealed unsafe partial class QuickTransferPlugin(IDalamudPluginInterface p
             Configuration.MiddleClickUseXButton2 = false;
         }
 
-        Configuration.Version = CurrentConfigVersion;
+        Configuration.Version = Configuration.CurrentVersion;
         try
         {
             Configuration.Save();
@@ -256,7 +258,13 @@ public sealed unsafe partial class QuickTransferPlugin(IDalamudPluginInterface p
 
     private void ArmPendingNumeric(long now, PendingNumericKind kind, int windowMs, bool half = false, int suppressMs = 0)
     {
-        pendingNumericConfirmUntilMs = windowMs > 0 ? now + windowMs : 0;
+        // Without auto-confirm nothing fills the prompt, so it must stay visible and unarmed.
+        if (windowMs <= 0)
+        {
+            return;
+        }
+
+        pendingNumericConfirmUntilMs = now + windowMs;
         pendingNumericKind = kind;
         pendingNumericValueSet = false;
         pendingNumericValueSetAtMs = 0;
@@ -306,7 +314,6 @@ public sealed unsafe partial class QuickTransferPlugin(IDalamudPluginInterface p
 
         pendingMoveOutValuePtr = 0;
         pendingMoveAtkValuesPtr = 0;
-        pendingMoveOutValueFreeAtMs = 0;
         pendingMoveCreatedAtMs = 0;
         pendingMoveSawInputNumeric = false;
     }
@@ -349,6 +356,12 @@ public sealed unsafe partial class QuickTransferPlugin(IDalamudPluginInterface p
         {
         }
 
+        // Middle-click sort replays OpenForItemSlot on a slot the user did not click; a held modifier must not act on it.
+        if (pendingMiddleClickSortUntilMs > 0 && Environment.TickCount64 <= pendingMiddleClickSortUntilMs)
+        {
+            return;
+        }
+
         var mode = GetModifierModeLatched(Environment.TickCount64);
         if (mode == null)
         {
@@ -388,6 +401,7 @@ public sealed unsafe partial class QuickTransferPlugin(IDalamudPluginInterface p
             if (InventoryHelpers.IsCompanyChestDepositSourceType(inventoryType) && StartCompanyChestDeposit(inventoryType, (uint)slot))
             {
                 lastActionTickMs = now;
+                pendingDeferredMenuClick = null;
                 ContextMenuHandler.TryCloseCurrentContextMenu(agent);
                 return;
             }
@@ -396,6 +410,8 @@ public sealed unsafe partial class QuickTransferPlugin(IDalamudPluginInterface p
         if (ContextMenuHandler.TryAutoSelectFromAgent(agent, mode.Value, Configuration, out var chosenText, out var chosenIndex, ref pendingCloseContextMenuAtMs))
         {
             lastActionTickMs = now;
+            // Dalamud queues the deferred click from inside Original above; it must not act on this menu again.
+            pendingDeferredMenuClick = null;
             DebugLog($"({mode} + RClick) Selected context action '{chosenText}' (idx={chosenIndex}) via OpenForItemSlot.");
 
             ArmTradeOrSellConfirm(now, mode.Value, chosenText, requireTradeWindow: true);
@@ -420,6 +436,9 @@ public sealed unsafe partial class QuickTransferPlugin(IDalamudPluginInterface p
 
         if (!middleSortActive && mode == null)
         {
+            // A plain right-click after an auto-select must not open an invisible menu.
+            suppressContextMenuUntilMs = 0;
+            pendingCloseContextMenuAtMs = 0;
             return;
         }
 
@@ -530,11 +549,28 @@ public sealed unsafe partial class QuickTransferPlugin(IDalamudPluginInterface p
             Svc.Log.Information($"[QuickTransfer] Win32 mouse state: M={(mDown ? 1 : 0)} X1={(x1Down ? 1 : 0)} X2={(x2Down ? 1 : 0)}");
         }
 
+        if (mDown && !prevM)
+        {
+            lastMButtonPressMs = now;
+        }
+
+        if (x1Down && !prevX1)
+        {
+            lastX1ButtonPressMs = now;
+        }
+
+        if (x2Down && !prevX2)
+        {
+            lastX2ButtonPressMs = now;
+        }
+
         lastVkMButtonDown = mDown;
         lastVkX1ButtonDown = x1Down;
         lastVkX2ButtonDown = x2Down;
 
-        if (!ModifierBindings.IsMiddleClickEdge(mDown, prevM, x1Down, prevX1, x2Down, prevX2, Configuration))
+        // GetAsyncKeyState also sees clicks made in other programs.
+        if (!ModifierBindings.IsMiddleClickEdge(mDown, prevM, x1Down, prevX1, x2Down, prevX2, Configuration) ||
+            !WindowFunctions.ApplicationIsActivated())
         {
             return;
         }
@@ -712,13 +748,8 @@ public sealed unsafe partial class QuickTransferPlugin(IDalamudPluginInterface p
         }
 
         var inputVisible = InventoryHelpers.TryGetVisibleAddon(QuickTransferConstants.InputNumericAddonName, out var _);
-        if (inputVisible)
-        {
-            pendingMoveSawInputNumeric = true;
-        }
-
-        var graceExpired = pendingMoveCreatedAtMs > 0 && now - pendingMoveCreatedAtMs >= 1500;
-        if (pendingMoveSawInputNumeric && !inputVisible || now >= pendingMoveOutValueFreeAtMs || !inputVisible && graceExpired)
+        pendingMoveSawInputNumeric |= inputVisible;
+        if (CompanyChestPlanner.ShouldReleaseMoveBuffers(inputVisible, pendingMoveSawInputNumeric, pendingMoveCreatedAtMs, now))
         {
             ReleasePendingMoveBuffers();
         }
@@ -1084,26 +1115,19 @@ public sealed unsafe partial class QuickTransferPlugin(IDalamudPluginInterface p
                 CaptureHoveredDragDrop(args, recv, eventType, eventData, isCompanyChest, now);
             }
 
-            bool? middleDown = null;
-            try
-            {
-                middleDown = Svc.KeyState[(VirtualKey)ModifierBindings.VkMiddleButton];
-            }
-            catch
-            {
-            }
-
-            var isMiddle = ModifierBindings.IsMiddleClickPressed(Configuration, mouseButtonId, dragDropMouseButtonId, middleDown);
+            var mFresh = ModifierBindings.IsFreshPress(ModifierBindings.IsMouseButtonDown(ModifierBindings.VkMiddleButton), lastVkMButtonDown, lastMButtonPressMs, now);
+            var x1Fresh = ModifierBindings.IsFreshPress(ModifierBindings.IsMouseButtonDown(ModifierBindings.VkXButton1), lastVkX1ButtonDown, lastX1ButtonPressMs, now);
+            var x2Fresh = ModifierBindings.IsFreshPress(ModifierBindings.IsMouseButtonDown(ModifierBindings.VkXButton2), lastVkX2ButtonDown, lastX2ButtonPressMs, now);
+            var isMiddle = ModifierBindings.IsMiddleClickPressed(Configuration, mouseButtonId, dragDropMouseButtonId, mFresh, x1Fresh, x2Fresh);
 
             if (Configuration.DebugMode && now - lastReceiveEventDebugLogMs >= 250)
             {
                 lastReceiveEventDebugLogMs = now;
-                var asyncMiddleDown = ModifierBindings.IsConfiguredMiddleClickDown(Configuration);
                 var isMiddleByMask = ModifierBindings.IsMiddleClickEventMask(mouseButtonId, dragDropMouseButtonId, Configuration);
                 Svc.Log.Information(
                     $"[QuickTransfer] PreReceiveEvent: Addon='{addonName}', Type={eventType}, Param={recv.EventParam}, " +
                     $"MouseBtn={mouseButtonId} (0x{mouseButtonId:X2}), DragBtn={dragDropMouseButtonId} (0x{dragDropMouseButtonId:X2}), " +
-                    $"MaskMiddle={(isMiddleByMask ? "1" : "0")}, AsyncMiddle={(asyncMiddleDown ? "1" : "0")}, KeyStateMiddle={middleDown?.ToString() ?? "n/a"}");
+                    $"MaskMiddle={(isMiddleByMask ? "1" : "0")}, FreshM/X1/X2={(mFresh ? 1 : 0)}/{(x1Fresh ? 1 : 0)}/{(x2Fresh ? 1 : 0)}");
             }
 
             if (now - lastMiddleClickSortMs < 250 ||

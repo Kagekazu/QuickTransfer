@@ -24,6 +24,10 @@
     </PropertyGroup>
 
     <ItemGroup>
+        <InternalsVisibleTo Include="QuickTransfer.Tests" />
+    </ItemGroup>
+
+    <ItemGroup>
         <PackageReference Include="ECommons" Version="3.2.1.15" />
     </ItemGroup>
 

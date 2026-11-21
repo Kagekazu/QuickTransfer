@@ -5,4 +5,7 @@
   <Project Path="QuickTransfer/QuickTransfer.csproj">
     <Platform Project="x64" />
   </Project>
+  <Project Path="QuickTransfer.Tests/QuickTransfer.Tests.csproj">
+    <Platform Project="x64" />
+  </Project>
 </Solution>

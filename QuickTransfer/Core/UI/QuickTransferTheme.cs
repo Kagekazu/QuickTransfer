@@ -64,9 +64,9 @@ internal static class QuickTransferTheme
 
         (ImGuiCol.Tab, NavyRaised),
         (ImGuiCol.TabHovered, ControlHover),
-        (ImGuiCol.TabSelected, WithAlpha(GoldDark, 0.90f)),
-        (ImGuiCol.TabDimmed, NavyRaised),
-        (ImGuiCol.TabDimmedSelected, WithAlpha(GoldDark, 0.60f)),
+        (ImGuiCol.TabActive, WithAlpha(GoldDark, 0.90f)),
+        (ImGuiCol.TabUnfocused, NavyRaised),
+        (ImGuiCol.TabUnfocusedActive, WithAlpha(GoldDark, 0.60f)),
 
         (ImGuiCol.Separator, WithAlpha(GoldDark, 0.50f)),
         (ImGuiCol.SeparatorHovered, Gold),
