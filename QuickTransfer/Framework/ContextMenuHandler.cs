@@ -304,7 +304,8 @@ internal static unsafe partial class ContextMenuHandler
         }
 
         var found = ClassifyMenuItems(items);
-        foreach (var action in GetActionPreference(mode, configuration, found))
+        var menuHasRetainerRows = found.ContainsKey(AutoContextAction.EntrustToRetainer) || found.ContainsKey(AutoContextAction.RetrieveFromRetainer);
+        foreach (var action in GetActionPreference(mode, configuration, OpenWindows.Current(), menuHasRetainerRows))
         {
             if (!found.TryGetValue(action, out var hit))
             {
@@ -355,27 +356,29 @@ internal static unsafe partial class ContextMenuHandler
         return found;
     }
 
-    private static AutoContextAction[] GetActionPreference(
+    // The settings window's live "right now" lines read this too, so they always match what a click does.
+    public static AutoContextAction[] GetActionPreference(
         ModifierMode mode,
         Configuration configuration,
-        Dictionary<AutoContextAction, (int Index, string Text)> found)
+        OpenWindows open,
+        bool menuHasRetainerRows = false)
     {
         if (mode == ModifierMode.Alt)
         {
             return [AutoContextAction.Split];
         }
 
-        if (mode == ModifierMode.Shift && configuration.EnableVendorQuickSell && InventoryHelpers.IsVendorOpen())
+        if (mode == ModifierMode.Shift && configuration.EnableVendorQuickSell && open.Vendor)
         {
             return [AutoContextAction.Sell];
         }
 
-        if (mode == ModifierMode.Shift && InventoryHelpers.IsTradeOpen())
+        if (mode == ModifierMode.Shift && open.Trade)
         {
             return [AutoContextAction.Trade];
         }
 
-        if (mode == ModifierMode.Shift && configuration.EnableCompanyChest && InventoryHelpers.IsCompanyChestOpen())
+        if (mode == ModifierMode.Shift && configuration.EnableCompanyChest && open.CompanyChest)
         {
             return [AutoContextAction.RemoveFromCompanyChest];
         }
@@ -385,20 +388,44 @@ internal static unsafe partial class ContextMenuHandler
             return [AutoContextAction.ReturnToInventory, AutoContextAction.PlaceInArmouryChest];
         }
 
-        var saddlebagOpen = InventoryHelpers.IsSaddlebagOpen();
-        if (InventoryHelpers.IsRetainerOpen() ||
-            found.ContainsKey(AutoContextAction.EntrustToRetainer) ||
-            found.ContainsKey(AutoContextAction.RetrieveFromRetainer))
+        if (open.Retainer || menuHasRetainerRows)
         {
-            return saddlebagOpen
+            return open.Saddlebag
                 ? [AutoContextAction.AddAllToSaddlebag, AutoContextAction.EntrustToRetainer, AutoContextAction.RemoveAllFromSaddlebag]
                 : [AutoContextAction.RetrieveFromRetainer, AutoContextAction.EntrustToRetainer];
         }
 
-        return saddlebagOpen
+        return open.Saddlebag
             ? [AutoContextAction.RemoveAllFromSaddlebag, AutoContextAction.AddAllToSaddlebag]
             : [AutoContextAction.PlaceInArmouryChest, AutoContextAction.ReturnToInventory];
     }
+
+    // Ctrl only acts while one of these is open (see OpenForItemSlotDetour).
+    public static bool IsArmouryShortcutActive(OpenWindows open) => open.Saddlebag || open.Retainer || open.CompanyChest;
+
+    public static string DescribeQuickTransfer(Configuration configuration, OpenWindows open)
+    {
+        if (configuration.YieldQuickTransferOnRetainerSellList && open.RetainerSellList)
+        {
+            return "Paused while the retainer market list is open";
+        }
+
+        return GetActionPreference(ModifierMode.Shift, configuration, open)[0] switch
+        {
+            AutoContextAction.Sell => "Sells the item to the vendor",
+            AutoContextAction.Trade => "Adds the item to the trade",
+            AutoContextAction.RemoveFromCompanyChest => "Between inventory and the FC chest (current tab)",
+            AutoContextAction.AddAllToSaddlebag => "Inventory and retainer items to the saddlebag, saddlebag items to the retainer",
+            AutoContextAction.RetrieveFromRetainer => "Between inventory and retainer",
+            AutoContextAction.RemoveAllFromSaddlebag => "Between inventory and saddlebag",
+            var _ => "Between inventory and Armoury Chest"
+        };
+    }
+
+    public static string DescribeArmoury(OpenWindows open)
+        => IsArmouryShortcutActive(open)
+            ? "Between inventory and Armoury Chest"
+            : "Off until a saddlebag, retainer or FC chest is open";
 
     public static bool TrySelectSortAndClose(AgentInventoryContext* agent, AtkUnitBase* contextMenuAddon, out string chosenText, out int chosenIndex)
     {

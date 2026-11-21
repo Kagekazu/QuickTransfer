@@ -5,6 +5,23 @@ using FFXIVClientStructs.FFXIV.Component.GUI;
 using Lumina.Excel.Sheets;
 namespace QuickTransfer.Framework;
 
+internal readonly record struct OpenWindows(
+    bool Vendor,
+    bool Trade,
+    bool CompanyChest,
+    bool Retainer,
+    bool RetainerSellList,
+    bool Saddlebag)
+{
+    public static OpenWindows Current() => new(
+        InventoryHelpers.IsVendorOpen(),
+        InventoryHelpers.IsTradeOpen(),
+        InventoryHelpers.IsCompanyChestOpen(),
+        InventoryHelpers.IsRetainerOpen(),
+        InventoryHelpers.IsRetainerSellListOpen(),
+        InventoryHelpers.IsSaddlebagOpen());
+}
+
 internal static unsafe class InventoryHelpers
 {
     public static readonly InventoryType[] PlayerInventoryTypes =
